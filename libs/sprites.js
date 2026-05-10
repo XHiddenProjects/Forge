@@ -3,7 +3,8 @@ import { Canvas } from "./canvas.js";
 import { Image } from "./image.js";
 import { math } from "./math.js";
 import { Helpers } from "./helpers.js";
-import { Transform } from "./transforms.js";
+import { Shapes } from "./shapes.js";
+
 
 /**
  * Sprite system for Canvex — 2D game-object management with animation, physics-lite,
@@ -140,9 +141,8 @@ export const Sprites = class {
         const img = options.image ?? null;
         const w = options.width  ?? img?.width  ?? 0;
         const h = options.height ?? img?.height ?? 0;
-
         const sprite = {
-            id: options.id ?? Helpers.generateId({ length: 12, prefix: 'spr_' }),
+            id: options.id ?? Helpers.generateId({ length: 12, prefix: 'spr_'}),
 
             // Transform
             x: Number(options.x  ?? 0),
@@ -186,7 +186,6 @@ export const Sprites = class {
             tags: new Set(Array.isArray(options.tags) ? options.tags : []),
             data: options.data && typeof options.data === 'object' ? { ...options.data } : {}
         };
-
         this._registry.set(sprite.id, sprite);
         return sprite;
     }
@@ -269,16 +268,16 @@ export const Sprites = class {
         const usableW = image.width  - offsetX;
         const usableH = image.height - offsetY;
 
-        const columns = Math.floor(options.columns ?? Math.floor(usableW / (frameWidth  + spacing)));
-        const rows    = Math.floor(options.rows    ?? Math.floor(usableH / (frameHeight + spacing)));
+        const columns = math.floor(options.columns ?? math.floor(usableW / (frameWidth  + spacing)));
+        const rows    = math.floor(options.rows    ?? math.floor(usableH / (frameHeight + spacing)));
 
         return {
             image,
             frameWidth,
             frameHeight,
-            columns: Math.max(1, columns),
-            rows:    Math.max(1, rows),
-            totalFrames: Math.max(1, columns) * Math.max(1, rows),
+            columns: math.max(1, columns),
+            rows:    math.max(1, rows),
+            totalFrames: math.max(1, columns) * math.max(1, rows),
             margin,
             spacing,
             offsetX,
@@ -300,7 +299,7 @@ export const Sprites = class {
      */
     static frameRect(sheet, frame) {
         const col = frame % sheet.columns;
-        const row = Math.floor(frame / sheet.columns);
+        const row = math.floor(frame / sheet.columns);
 
         const sx = sheet.offsetX + col * (sheet.frameWidth  + sheet.spacing) + sheet.margin;
         const sy = sheet.offsetY + row * (sheet.frameHeight + sheet.spacing) + sheet.margin;
@@ -508,10 +507,9 @@ export const Sprites = class {
 
         const ox = w * sprite.anchorX;
         const oy = h * sprite.anchorY;
-
         ctx.save();
 
-        // Position + rotation + scale
+        // Position + rotation + scale via native Canvas 2D transforms
         ctx.translate(x, y);
         if (sprite.angle !== 0)  ctx.rotate(sprite.angle);
         if (sprite.scaleX !== 1 || sprite.scaleY !== 1) ctx.scale(sprite.scaleX, sprite.scaleY);
@@ -562,26 +560,96 @@ export const Sprites = class {
 
     /**
      * Draws a region of a Canvex `Image` instance onto the canvas, with optional tint.
+     *
+     * Sprites route image rendering through `Shapes.Image()` so sprite drawing stays
+     * aligned with the shared Canvex image API instead of bypassing it with direct
+     * `ctx.drawImage()` calls. Sprite-sheet frames and tinted sprites are converted
+     * into temporary Canvex Image objects, then handed to `Shapes.Image()`.
+     *
      * @private
      */
     static _drawImageRegion(ctx, img, sx, sy, sw, sh, dx, dy, dw, dh, tint) {
-        // Materialise the Image's pixels into a temporary canvas, then draw
+        this._ensureImageCanvas(img);
+
+        const usesWholeImage =
+            !tint &&
+            sx === 0 &&
+            sy === 0 &&
+            sw === img.width &&
+            sh === img.height;
+
+        if (usesWholeImage) {
+            this._drawViaShapesImage(img, dx, dy, dw, dh);
+            return;
+        }
+
         const temp = document.createElement('canvas');
-        temp.width  = img.width;
-        temp.height = img.height;
+        temp.width = sw;
+        temp.height = sh;
+
         const tempCtx = temp.getContext('2d');
-        const imageData = new ImageData(img.pixels, img.width, img.height);
-        tempCtx.putImageData(imageData, 0, 0);
+        tempCtx.drawImage(img._canvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
         if (tint) {
             tempCtx.globalCompositeOperation = 'multiply';
             tempCtx.fillStyle = tint;
-            tempCtx.fillRect(0, 0, img.width, img.height);
+            tempCtx.fillRect(0, 0, sw, sh);
             tempCtx.globalCompositeOperation = 'destination-in';
-            tempCtx.putImageData(imageData, 0, 0);
+            tempCtx.drawImage(img._canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            tempCtx.globalCompositeOperation = 'source-over';
         }
 
-        ctx.drawImage(temp, sx, sy, sw, sh, dx, dy, dw, dh);
+        this._drawViaShapesImage(this._imageFromCanvas(temp), dx, dy, dw, dh);
+    }
+
+    /**
+     * Ensures a Canvex Image has a backing canvas that can be cropped/tinted.
+     * @private
+     */
+    static _ensureImageCanvas(img) {
+        if (img._canvas && img._ctx) return img;
+
+        img._canvas = document.createElement('canvas');
+        img._canvas.width = img.width;
+        img._canvas.height = img.height;
+        img._ctx = img._canvas.getContext('2d');
+
+        const imageData = img._ctx.createImageData(img.width, img.height);
+        imageData.data.set(img.pixels);
+        img._ctx.putImageData(imageData, 0, 0);
+
+        return img;
+    }
+
+    /**
+     * Converts a canvas into a Canvex Image object for use with Shapes.Image().
+     * @private
+     */
+    static _imageFromCanvas(canvas) {
+        const out = new Image();
+        out.width = canvas.width;
+        out.height = canvas.height;
+        out._canvas = canvas;
+        out._ctx = canvas.getContext('2d');
+        out.pixels = out._ctx.getImageData(0, 0, out.width, out.height).data;
+        return out;
+    }
+
+    /**
+     * Draws through Shapes.Image while preserving the active sprite transform.
+     *
+     * Image._draw() uses putImageData when the destination size exactly equals
+     * the source size. putImageData ignores the canvas transform matrix and alpha,
+     * which breaks rotated/scaled/flipped sprites. Wrapping equal dimensions in
+     * Number objects keeps the visual size the same but makes Image._draw() take
+     * its transform-aware drawImage branch.
+     *
+     * @private
+     */
+    static _drawViaShapesImage(img, x, y, w, h) {
+        const drawW = w === img.width ? new Number(w) : w;
+        const drawH = h === img.height ? new Number(h) : h;
+        Shapes.Image(img, x, y, drawW, drawH);
     }
 
     /** @private — draws an outlined debug placeholder */
@@ -617,8 +685,8 @@ export const Sprites = class {
      * if (box.left < 0) hero.x -= box.left; // wall clamp
      */
     static bounds(sprite) {
-        const w = sprite.width  * Math.abs(sprite.scaleX);
-        const h = sprite.height * Math.abs(sprite.scaleY);
+        const w = sprite.width  * math.abs(sprite.scaleX);
+        const h = sprite.height * math.abs(sprite.scaleY);
         const left   = sprite.x - w * sprite.anchorX;
         const top    = sprite.y - h * sprite.anchorY;
         const right  = left + w;
@@ -696,15 +764,15 @@ export const Sprites = class {
         const ba = this.bounds(a);
         const bb = this.bounds(b);
 
-        const overlapX = Math.min(ba.right, bb.right) - Math.max(ba.left, bb.left);
-        const overlapY = Math.min(ba.bottom, bb.bottom) - Math.max(ba.top, bb.top);
+        const overlapX = math.min(ba.right, bb.right) - math.max(ba.left, bb.left);
+        const overlapY = math.min(ba.bottom, bb.bottom) - math.max(ba.top, bb.top);
 
         if (overlapX <= 0 || overlapY <= 0) return null;
 
         const dx = ba.x + ba.w / 2 < bb.x + bb.w / 2 ? -overlapX : overlapX;
         const dy = ba.y + ba.h / 2 < bb.y + bb.h / 2 ? -overlapY : overlapY;
 
-        return Math.abs(dx) <= Math.abs(dy) ? { dx, dy: 0 } : { dx: 0, dy };
+        return math.abs(dx) <= math.abs(dy) ? { dx, dy: 0 } : { dx: 0, dy };
     }
 
     /**
@@ -848,7 +916,7 @@ export const Sprites = class {
     static moveToward(sprite, targetX, targetY, speed, dt = 1 / 60) {
         const dx = targetX - sprite.x;
         const dy = targetY - sprite.y;
-        const dist = Math.hypot(dx, dy);
+        const dist = math.dist(sprite.x, sprite.y, targetX, targetY);
         const step = speed * dt;
 
         if (dist <= step) {
@@ -874,7 +942,7 @@ export const Sprites = class {
      * @returns {void}
      */
     static lookAt(sprite, targetX, targetY, offset = 0) {
-        sprite.angle = Math.atan2(targetY - sprite.y, targetX - sprite.x) + offset;
+        sprite.angle = math.atan2(targetY - sprite.y, targetX - sprite.x) + offset;
     }
 
     /**
@@ -888,8 +956,8 @@ export const Sprites = class {
      * Sprites.thrust(hero, 200); // shoot forward
      */
     static thrust(sprite, force) {
-        sprite.vx += Math.cos(sprite.angle) * force;
-        sprite.vy += Math.sin(sprite.angle) * force;
+        sprite.vx += math.cos(sprite.angle) * force;
+        sprite.vy += math.sin(sprite.angle) * force;
     }
 
     /**
@@ -956,11 +1024,11 @@ export const Sprites = class {
         const r = right  ?? cw;
         const b = bottom ?? ch;
 
-        const hw = (sprite.width  * Math.abs(sprite.scaleX)) * sprite.anchorX;
-        const hh = (sprite.height * Math.abs(sprite.scaleY)) * sprite.anchorY;
+        const hw = (sprite.width  * math.abs(sprite.scaleX)) * sprite.anchorX;
+        const hh = (sprite.height * math.abs(sprite.scaleY)) * sprite.anchorY;
 
-        sprite.x = this._clamp(sprite.x, left + hw, r - (sprite.width  * Math.abs(sprite.scaleX) - hw));
-        sprite.y = this._clamp(sprite.y, top  + hh, b - (sprite.height * Math.abs(sprite.scaleY) - hh));
+        sprite.x = this._clamp(sprite.x, left + hw, r - (sprite.width  * math.abs(sprite.scaleX) - hw));
+        sprite.y = this._clamp(sprite.y, top  + hh, b - (sprite.height * math.abs(sprite.scaleY) - hh));
     }
 
     // ─── Distance / angle utilities ──────────────────────────────────────────
@@ -973,7 +1041,7 @@ export const Sprites = class {
      * @returns {number}
      */
     static distance(a, b) {
-        return Math.hypot(b.x - a.x, b.y - a.y);
+        return math.dist(a.x, a.y, b.x, b.y);
     }
 
     /**
@@ -984,7 +1052,7 @@ export const Sprites = class {
      * @returns {number} Angle in radians.
      */
     static angleTo(a, b) {
-        return Math.atan2(b.y - a.y, b.x - a.x);
+        return math.atan2(b.y - a.y, b.x - a.x);
     }
 
     // ─── Tween / fade helpers ────────────────────────────────────────────────
@@ -1021,7 +1089,7 @@ export const Sprites = class {
         const diff = target - sprite.alpha;
         const step = speed * dt;
 
-        if (Math.abs(diff) <= step) {
+        if (math.abs(diff) <= step) {
             sprite.alpha = this._clamp(target, 0, 1);
             return true;
         }
@@ -1044,8 +1112,8 @@ export const Sprites = class {
         const diffY = targetScale - sprite.scaleY;
         const step  = speed * dt;
 
-        const doneX = Math.abs(diffX) <= step;
-        const doneY = Math.abs(diffY) <= step;
+        const doneX = math.abs(diffX) <= step;
+        const doneY = math.abs(diffY) <= step;
 
         sprite.scaleX = doneX ? targetScale : sprite.scaleX + Math.sign(diffX) * step;
         sprite.scaleY = doneY ? targetScale : sprite.scaleY + Math.sign(diffY) * step;

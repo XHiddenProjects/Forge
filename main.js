@@ -5,7 +5,7 @@ import { Interaction } from "./libs/interaction.js";
 import { Camera } from "./libs/camera.js";
 import { math } from "./libs/math.js";
 import { Charts } from "./libs/charts.js";
-import { pointer } from "./libs/events.js";
+import { pointer, Keyboard } from "./libs/events.js";
 import { Helpers } from "./libs/helpers.js";
 import { Triggers } from './libs/triggers.js';
 import { Logic } from "./libs/logic.js";
@@ -21,20 +21,20 @@ import { Transform } from './libs/transforms.js'
 import { Color } from "./libs/color.js";
 import { Sound } from "./libs/sound.js";
 import { Flow } from "./libs/flow.js";
+import { Sprites } from "./libs/sprites.js";
+import { Image } from "./libs/image.js";
 
 const canvasWidth  = 500;
 const canvasHeight = 500;
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 window.setup = async function () {
-  Canvex.createCanvas(0,0,canvasWidth,canvasHeight);
-  Canvex.background(Color.color(200));
+  Canvex.createCanvas(0, 0, canvasWidth, canvasHeight);
+  Canvex.background(Color.color(30));
 
-  
 };
-
-
 
 // ─── Draw ─────────────────────────────────────────────────────────────────────
 window.draw = function () {
-  
+
 };

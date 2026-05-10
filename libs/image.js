@@ -80,18 +80,20 @@ export const Image = class{
      * @param {Image} img - The image instance.
      * @returns {Image} This Image instance for method chaining.
      */
-    static updatePixels(img){
-        if(!img._canvas){
-            img._canvas = document.createElement('canvas');
+    static updatePixels(img) {
+        if (!img._canvas) {
+            img._canvas = document.createElement("canvas");
             img._canvas.width = img.width;
             img._canvas.height = img.height;
-            img._ctx = img._canvas.getContext('2d');
+            img._ctx = img._canvas.getContext("2d");
         }
+
         const imageData = img._ctx.createImageData(img.width, img.height);
         imageData.data.set(img.pixels);
         img._ctx.putImageData(imageData, 0, 0);
         return img;
     }
+
 
     /**
      * Gets the color of a pixel at the specified coordinates.
@@ -514,23 +516,52 @@ export const Image = class{
      * @param {number} [h=img.height] - The height to draw the image.
      * @returns {Image} This Image instance for method chaining.
      */
-    static _draw(img, x = 0, y = 0, w, h){
+    static _draw(img, x = 0, y = 0, w = img.width, h = img.height) {
         const ctx = Canvex.ctx;
-        w = w ?? img.width;
-        h = h ?? img.height;
-        
-        if (w === img.width && h === img.height) {
-            const imageData = new ImageData(img.pixels, img.width, img.height);
-            ctx.putImageData(imageData, x, y);
-        } else {
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = img.width;
-            tempCanvas.height = img.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            const imageData = new ImageData(img.pixels, img.width, img.height);
-            tempCtx.putImageData(imageData, 0, 0);
-            ctx.drawImage(tempCanvas, x, y, w, h);
+        if (!ctx) {
+            console.warn("Canvex.ctx is not set.");
+            return img;
         }
+
+        // Coerce to primitives — callers may pass Number objects (e.g. from
+        // _drawViaShapesImage) to force the drawImage branch; valueOf() unwraps them.
+        const dx = +x;
+        const dy = +y;
+        const dw = +w;
+        const dh = +h;
+
+        if (!Number.isFinite(dw) || dw <= 0 || !Number.isFinite(dh) || dh <= 0) {
+            console.warn("Image._draw: invalid draw dimensions", dw, dh);
+            return img;
+        }
+
+        // If we have a backing canvas (set by Image.load OR makePlaceholderImage),
+        // use the 9-argument drawImage so the full source is mapped to the
+        // destination rect and respects the current canvas transform.
+        if (img._canvas) {
+            ctx.drawImage(
+                img._canvas,
+                0, 0, img._canvas.width, img._canvas.height,
+                dx, dy, dw, dh
+            );
+            return img;
+        }
+
+        // Fallback: build a canvas from the raw pixel buffer and cache it so
+        // subsequent calls take the fast path above.
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width  = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext("2d");
+
+        const imageData = tempCtx.createImageData(img.width, img.height);
+        imageData.data.set(img.pixels);
+        tempCtx.putImageData(imageData, 0, 0);
+
+        img._canvas = tempCanvas;
+        img._ctx    = tempCtx;
+
+        ctx.drawImage(tempCanvas, 0, 0, img.width, img.height, dx, dy, dw, dh);
         return img;
     }
 
@@ -540,31 +571,40 @@ export const Image = class{
      * @param {string} path - The file path or URL of the image to load.
      * @returns {Promise<Image>} Promise that resolves with the loaded Image instance.
      */
-    static load(path){
+    static load(path) {
         return new Promise((resolve, reject) => {
             const nativeImg = new window.Image();
-            nativeImg.onload = function(){
-                const canvexImg = new Image();
-                canvexImg.width = this.width;
-                canvexImg.height = this.height;
-                
-                const canvas = document.createElement('canvas');
-                canvas.width = this.width;
-                canvas.height = this.height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(this, 0, 0);
-                
+            nativeImg.crossOrigin = "anonymous"; // must be set BEFORE src
+
+            nativeImg.onload = function () {
+            const canvexImg = new Image();
+            canvexImg.width = this.width;
+            canvexImg.height = this.height;
+
+            const canvas = document.createElement("canvas");
+            canvas.width = this.width;
+            canvas.height = this.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(this, 0, 0);
+
+            canvexImg._canvas = canvas;
+            canvexImg._ctx = ctx;
+
+            // ✅ Try to read pixels, but don't fail if CORS blocks it
+            try {
                 const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                
                 canvexImg.pixels = imageData.data;
-                resolve(canvexImg);
+            } catch (err) {
+                console.warn("Could not read pixels (CORS-tainted canvas). Drawing still works.", err);
+                canvexImg.pixels = new Uint8ClampedArray(this.width * this.height * 4); // empty buffer
             }
-            nativeImg.onerror = function(){
-                reject(new Error(`Failed to load image from: ${path}`));
-            }
-            nativeImg.crossOrigin = 'anonymous';
+
+            resolve(canvexImg);
+            };
+
+            nativeImg.onerror = () => reject(new Error(`Failed to load image from: ${path}`));
             nativeImg.src = path;
         });
-    }
+        }
 
 }

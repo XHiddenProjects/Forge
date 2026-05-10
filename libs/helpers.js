@@ -318,7 +318,7 @@ export const Helpers = class {
     } = options;
 
     const pick = (chars) => {
-      return math.random(chars.split());
+      return math.random(chars.split(""));
     };
 
     // Pattern-based ID
