@@ -25,7 +25,7 @@
  *    peer.sendShared("position", { x: 5, y: 9 });
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { Multiplayer } from "./mutliplayer.js";
+import { Multiplayer } from "./multiplayer.js";
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 const SIGNAL_SERVER = "https://0.peerjs.com";   // PeerJS free signaling cloud

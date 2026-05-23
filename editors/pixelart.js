@@ -224,6 +224,41 @@ export class PixelArt {
     }
 
     /**
+     * Compatibility alias used by GameEditor's sprite bridge.
+     * Returns ONLY the pixel grid as a transparent PNG data URL — no editor UI,
+     * no checkerboard, no selection rectangle, no grid, and no border.
+     */
+    toDataURL(type = "image/png") {
+        return this.exportPNG();
+    }
+
+    /** Compatibility alias for older callers. */
+    getDataURL(type = "image/png") {
+        return this.exportPNG();
+    }
+
+    /** Compatibility alias for older callers. */
+    getPNGDataURL() {
+        return this.exportPNG();
+    }
+
+    /** Compatibility alias for older callers. */
+    exportDataURL(type = "image/png") {
+        return this.exportPNG();
+    }
+
+    /**
+     * Load a PNG/data URL back into the current PixelArt grid.
+     * Used when re-opening a sprite asset so saved pixels are restored into
+     * the editable grid instead of clearing the sprite.
+     */
+    loadFromDataURL(dataURL, opts = {}) {
+        if (!dataURL) return Promise.resolve();
+        const { resize = false } = opts;
+        return this.importImage(dataURL, { newLayer: false, resize });
+    }
+
+    /**
      * Export all animation frames as an array of PNG data URLs.
      * Each element corresponds to one frame (all visible layers composited).
      * @returns {string[]} Array of data URLs (one per frame).
@@ -956,7 +991,8 @@ export class PixelArt {
   height:48px;min-height:48px;flex-shrink:0;
   background:var(--pa-bg1);border-bottom:1px solid var(--pa-border);
   display:flex;align-items:center;gap:2px;padding:0 8px;
-  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+  overflow-x:auto;overflow-y:auto;scrollbar-width:none;
+  flex-wrap: wrap;
 }
 .__pa_toolbar::-webkit-scrollbar{display:none}
 .__pa_sep{width:1px;height:24px;background:var(--pa-border);flex-shrink:0;margin:0 4px}
@@ -1472,7 +1508,11 @@ export class PixelArt {
         this.#dpr = window.devicePixelRatio || 1;
 
         // Integer cell size → no sub-pixel cell boundaries in CSS space
-        const fit  = Math.floor(Math.min(W, H) * 0.85 / Math.max(this.#cols, this.#rows));
+        const fitW = Math.floor((W * 0.85) / this.#cols);
+        const fitH = Math.floor((H * 0.85) / this.#rows);
+        const fit  = Math.floor(Math.min(fitW, fitH));
+        // Always use one integer CSS pixel size for both axes.
+        // This guarantees same-size square cells even in non-square containers.
         this.#cellSize = Math.max(2, fit);
 
         // Integer offsets → grid origin lands on a whole CSS pixel
@@ -1772,9 +1812,11 @@ export class PixelArt {
         const prev         = this.#viewScale;
         this.#viewScale    = Helpers.clamp(this.#viewScale * factor, 0.1, 50);
         const actualFactor = this.#viewScale / prev;
-        this.#viewX        = cx - (cx - this.#viewX) * actualFactor;
-        this.#viewY        = cy - (cy - this.#viewY) * actualFactor;
-        this.#cellSize     = Math.round(this.#cellSize * actualFactor);
+        this.#viewX        = Math.round(cx - (cx - this.#viewX) * actualFactor);
+        this.#viewY        = Math.round(cy - (cy - this.#viewY) * actualFactor);
+        // Keep #cellSize as the integer base cell size calculated by #resizeCanvas().
+        // Zoom is represented only by #viewScale so every rendered cell remains square
+        // and grid lines stay evenly spaced after container resizes and wheel zooms.
     }
 
     // ─── Keyboard shortcuts ──────────────────────────────────────────────────

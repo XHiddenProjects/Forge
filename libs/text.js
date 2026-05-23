@@ -414,5 +414,16 @@ export const Text = class {
      * @returns {String}
      */
     static repeat = (str,times)=>str.repeat(times);
-    
+    /**
+     * Parses the string to a integer
+     * @param {String} str String to convert 
+     * @returns {Number} Integer
+     */
+    static toInt = (str)=>parseInt(str);
+    /**
+     * Parses the string to a float
+     * @param {String} str String to convert
+     * @returns {Number} Float
+     */
+    static toFloat = (str)=>parseFloat(str);
 }

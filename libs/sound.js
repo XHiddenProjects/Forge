@@ -43,6 +43,10 @@ export class Sound {
     audio.playbackRate = options.playbackRate ?? 1;
     audio.muted = options.muted ?? false;
 
+    // register created audio so helpers (e.g., stopAll) can act on them
+    if (!Sound._all) Sound._all = [];
+    Sound._all.push(audio);
+
     return audio;
   }
 
@@ -90,6 +94,13 @@ export class Sound {
    * await Sound.play(sound);
    */
   static async play(audio) {
+    // Allow callers to pass a src string — create and play it
+    if (typeof audio === 'string') {
+      const a = Sound.create(audio);
+      try { await a.play(); } catch(e) { /* ignore play errors */ }
+      return;
+    }
+
     if (!Sound.isAudio(audio)) {
       throw new TypeError("Sound.play expected an HTMLAudioElement.");
     }
@@ -140,6 +151,16 @@ export class Sound {
   static stop(audio) {
     Sound.pause(audio);
     Sound.setCurrentTime(audio, 0);
+  }
+
+  /**
+   * Stops all known audio elements created via Sound.create.
+   */
+  static stopAll() {
+    if (!Sound._all) return;
+    for (const a of Sound._all.slice()) {
+      try { Sound.stop(a); } catch (e) { /* ignore */ }
+    }
   }
 
   /**

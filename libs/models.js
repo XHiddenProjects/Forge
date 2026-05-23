@@ -413,47 +413,13 @@ export const Models = class {
         Transform.rotateZ(rz);
         Transform.scale(sx, sy, sz);
 
-        // -- 3. Upload MVP matrices using Camera.snapshot() (same as Interaction)
-        // Camera.snapshot() is the canonical way to read view+projection in Canvex.
-        // Interaction.js uses snap.viewMatrix for u_modelView and snap.projectionMatrix
-        // for u_projection. We do the same, combining snap.viewMatrix * model transform.
-        const program = gl.getParameter(gl.CURRENT_PROGRAM);
-        if (program) {
-            const snap     = typeof Camera.snapshot === 'function' ? Camera.snapshot() : null;
-            const viewMat  = snap?.viewMatrix;
-            const projMat  = snap?.projectionMatrix;
-
-            const mvLoc = gl.getUniformLocation(program, 'u_modelView');
-            if (mvLoc) {
-                if (viewMat && viewMat.length === 16) {
-                    // Combine: viewMatrix * modelMatrix so camera position is respected.
-                    const modelMat = typeof Transform.getMatrix === 'function' ? Transform.getMatrix() : null;
-                    if (modelMat && modelMat.length === 16) {
-                        gl.uniformMatrix4fv(mvLoc, false,
-                            new Float32Array(Models.#mat4Mul(viewMat, modelMat)));
-                    } else {
-                        // No model matrix accessor: upload view only (model stays at origin).
-                        gl.uniformMatrix4fv(mvLoc, false, new Float32Array(viewMat));
-                    }
-                } else {
-                    // Fallback: no Camera.snapshot viewMatrix, use Transform stack only.
-                    Transform.setMatrixUniform(program, 'u_modelView');
-                }
-            }
-
-            const projLoc = gl.getUniformLocation(program, 'u_projection');
-            if (projLoc && projMat && projMat.length === 16) {
-                gl.uniformMatrix4fv(projLoc, false, new Float32Array(projMat));
-            }
-
-            const useMatLoc = gl.getUniformLocation(program, 'u_useMatrices');
-            if (useMatLoc) gl.uniform1i(useMatLoc, 1);
-        }
-
-                // ── 4. Apply material ────────────────────────────────────────────────
+        // ── 3. Apply material (may switch shader programs) ───────────────────
+        // #applyMaterial selects the correct program (matte, custom shader, etc.)
+        // and sets all material uniforms on it. Matrices are uploaded afterwards
+        // so they always land on the final active program, not a stale one.
         Models.#applyMaterial(model, gl);
-        // #applyMaterial can switch shader programs. Upload matrices again to
-        // the shader that is active for the model draw.
+
+        // ── 4. Upload MVP matrices to the now-active program ─────────────────
         Models.#uploadActiveMatrices(gl);
 
         // ── 5. Render ────────────────────────────────────────────────────────
@@ -466,7 +432,7 @@ export const Models = class {
             Models.#issueDrawCall(model, gl);
         }
 
-        // ── 6. Pop transform stack ───────────────────────────────────────────
+        // ── 6. Pop transform stack ────────────────────────────────────────────
         Transform.pop();
 
         return model;
@@ -560,7 +526,7 @@ export const Models = class {
      */
     static rotateTo(model, rx = 0, ry = 0, rz = 0) {
         Models.#assert(model);
-        model.rotation = [rx, ry, rz];
+        model.rotation = [rx, ry, rz]
         return model;
     }
 
@@ -1182,7 +1148,7 @@ export const Models = class {
             default:
                 Materials.ambientMaterial(mat.ambient);
                 Materials.specularMaterial(mat.specular);
-                break;
+            break;
         }
 
         Materials.metalness(mat.metalness ?? 0);

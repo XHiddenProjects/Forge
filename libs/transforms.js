@@ -393,7 +393,7 @@ export class Transform {
 
     throw new Error("Transform APIs support CanvasRenderingContext2D and WebGL/WebGL2 contexts.");
   }
-
+ 
   /**
    * Rotates the current coordinate system around the Z axis using the active
    * angle mode.
@@ -717,5 +717,31 @@ export class Transform {
 
     ctx.uniformMatrix4fv(location, transpose, Transform.#webglMatrixStack[Transform.#webglMatrixStack.length - 1]);
     return location;
+  }
+  /**
+   * Positions the current coordinate system at an absolute location.
+   *
+   * This is a convenience method that resets the current transform matrix and
+   * then applies a translation. Use {@link Transform.translate} when you want
+   * to move relative to the existing transform.
+   *
+   * For Canvas 2D, the optional `z` component is ignored.
+   * For WebGL / WebGL2, positioning is applied to all three axes.
+   *
+   * @param {number} x Horizontal position.
+   * @param {number} [y=0] Vertical position.
+   * @param {number} [z=0] Depth position for WebGL / WebGL2.
+   * @returns {void}
+   */
+  static position(x, y = 0, z = 0) {
+    if (x && typeof x === 'object') {
+      const p = x;
+      x = p.x ?? 0;
+      y = p.y ?? 0;
+      z = p.z ?? 0;
+    }
+
+    this.resetMatrix();
+    this.translate(x, y, z);
   }
 }

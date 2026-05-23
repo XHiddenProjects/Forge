@@ -143,6 +143,12 @@ export class Shapes {
 
     /** @type {string} */
     static #textFontFamily = "sans-serif";
+    /** @type {HTMLCanvasElement|OffscreenCanvas|null} @private */
+    static #textScratchCanvas = null;
+    /** @type {CanvasRenderingContext2D|OffscreenCanvasRenderingContext2D|null} @private */
+    static #textScratchCtx = null;
+    /** @type {WeakMap<WebGLRenderingContext|WebGL2RenderingContext, object>} @private */
+    static #textProgramCache = new WeakMap();
     /** @type {{ vertices: Array<{x:number,y:number,z:number}>, uvs: Array<[number,number]> } | null} @private */
     static #shapeVertexBuffer3D = null;
 
@@ -1255,11 +1261,39 @@ export class Shapes {
     }
     static #textCtx() {
         const ctx = this.#ctx();
-        if (!this.#isCanvas2D(ctx)) {
-            throw new Error("Text APIs currently support CanvasRenderingContext2D only.");
+        if (this.#isCanvas2D(ctx)) {
+            this.#applyTextState(ctx);
+            return ctx;
         }
-        this.#applyTextState(ctx);
-        return ctx;
+        if (this.#isWebGL(ctx)) {
+            return this.#textMeasureCtx();
+        }
+        throw new Error("Text APIs require CanvasRenderingContext2D, WebGLRenderingContext, or WebGL2RenderingContext.");
+    }
+
+    /**
+     * Returns a 2D context used for measuring/rasterizing text in WebGL/WebGL2 mode.
+     * @returns {CanvasRenderingContext2D|OffscreenCanvasRenderingContext2D}
+     * @private
+     */
+    static #textMeasureCtx() {
+        if (!this.#textScratchCanvas) {
+            if (typeof OffscreenCanvas !== "undefined") {
+                this.#textScratchCanvas = new OffscreenCanvas(1, 1);
+            } else if (typeof document !== "undefined" && typeof document.createElement === "function") {
+                this.#textScratchCanvas = document.createElement("canvas");
+                this.#textScratchCanvas.width = 1;
+                this.#textScratchCanvas.height = 1;
+            } else {
+                throw new Error("Text requires OffscreenCanvas or document.createElement('canvas').");
+            }
+        }
+        if (!this.#textScratchCtx) {
+            this.#textScratchCtx = this.#textScratchCanvas.getContext("2d");
+            if (!this.#textScratchCtx) throw new Error("Unable to create a 2D context for text measurement.");
+        }
+        this.#applyTextState(this.#textScratchCtx);
+        return this.#textScratchCtx;
     }
 
     /**
@@ -1321,7 +1355,7 @@ export class Shapes {
      * @private
      */
     static #wrapLines(ctx, text, maxWidth) {
-        const paragraphs = text.split(/\?/);
+        const paragraphs = text.split(/\r?\n/);
         if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
             return paragraphs;
         }
@@ -1520,7 +1554,7 @@ export class Shapes {
     static textWidth(str) {
         const ctx = this.#textCtx();
         const text = this.#normalizeText(str);
-        return Math.max(...text.split(/\?/).map((line) => ctx.measureText(line).width), 0);
+        return Math.max(...text.split(/\r?\n/).map((line) => ctx.measureText(line).width), 0);
     }
 
     /**
@@ -1543,6 +1577,144 @@ export class Shapes {
     }
 
     /**
+     * Returns the active text alignment state.
+     * @returns {{horizontal:'left'|'center'|'right', vertical:'top'|'bottom'|'center'|'alphabetic'}}
+     * @private
+     */
+    static #getTextState() {
+        return { horizontal: this.#textAlignHorizontal, vertical: this.#textAlignVertical };
+    }
+
+    /**
+     * Converts the current Canvas/WebGL fill state into a CSS color for text rasterization.
+     * @param {CanvasRenderingContext2D|WebGLRenderingContext|WebGL2RenderingContext} ctx
+     * @returns {string}
+     * @private
+     */
+    static #currentTextFillStyle(ctx) {
+        if (this.#isCanvas2D(ctx)) return String(ctx.fillStyle ?? "#000");
+        try {
+            const canvas = (typeof Canvex !== "undefined" && Canvex?.canvas) ? Canvex.canvas : null;
+            const fillGL = canvas?.__canvexFillColorGL ?? (typeof Canvas !== "undefined" ? Canvas._fillColorGL : null);
+            if (Array.isArray(fillGL) && fillGL.length >= 4) {
+                const r = Math.round(Math.max(0, Math.min(1, fillGL[0])) * 255);
+                const g = Math.round(Math.max(0, Math.min(1, fillGL[1])) * 255);
+                const b = Math.round(Math.max(0, Math.min(1, fillGL[2])) * 255);
+                const a = Math.max(0, Math.min(1, fillGL[3]));
+                return `rgba(${r}, ${g}, ${b}, ${a})`;
+            }
+        } catch { /* fall through */ }
+        return "#000";
+    }
+
+    /** @private */
+    static #getTextProgram(gl) {
+        const cached = this.#textProgramCache.get(gl);
+        if (cached) return cached;
+        const vertexSource = `
+            attribute vec2 a_position;
+            attribute vec2 a_texcoord;
+            uniform vec2 u_resolution;
+            varying vec2 v_texcoord;
+            void main() {
+                vec2 zeroToOne = a_position / u_resolution;
+                vec2 zeroToTwo = zeroToOne * 2.0;
+                vec2 clipSpace = zeroToTwo - 1.0;
+                gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+                v_texcoord = a_texcoord;
+            }
+        `;
+        const fragmentSource = `
+            precision mediump float;
+            uniform sampler2D u_texture;
+            varying vec2 v_texcoord;
+            void main() { gl_FragColor = texture2D(u_texture, v_texcoord); }
+        `;
+        const compile = (type, source) => {
+            const shader = gl.createShader(type);
+            if (!shader) throw new Error("Failed to create a WebGL text shader.");
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                const log = gl.getShaderInfoLog(shader) || "Unknown shader compile error";
+                gl.deleteShader(shader);
+                throw new Error(`Failed to compile WebGL text shader: ${log}`);
+            }
+            return shader;
+        };
+        const vs = compile(gl.VERTEX_SHADER, vertexSource);
+        const fs = compile(gl.FRAGMENT_SHADER, fragmentSource);
+        const program = gl.createProgram();
+        if (!program) throw new Error("Failed to create a WebGL text program.");
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.deleteShader(vs);
+        gl.deleteShader(fs);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            const log = gl.getProgramInfoLog(program) || "Unknown program link error";
+            gl.deleteProgram(program);
+            throw new Error(`Failed to link WebGL text program: ${log}`);
+        }
+        const resource = {
+            program,
+            positionLocation: gl.getAttribLocation(program, "a_position"),
+            texcoordLocation: gl.getAttribLocation(program, "a_texcoord"),
+            resolutionLocation: gl.getUniformLocation(program, "u_resolution"),
+            textureLocation: gl.getUniformLocation(program, "u_texture"),
+            positionBuffer: gl.createBuffer(),
+            texcoordBuffer: gl.createBuffer()
+        };
+        this.#textProgramCache.set(gl, resource);
+        return resource;
+    }
+
+    /** @private */
+    static #drawTextTexture(gl, sourceCanvas, x, y, width, height) {
+        if (width <= 0 || height <= 0) return;
+        const resource = this.#getTextProgram(gl);
+        const previousProgram = gl.getParameter(gl.CURRENT_PROGRAM);
+        const previousArrayBuffer = gl.getParameter(gl.ARRAY_BUFFER_BINDING);
+        const previousTexture = gl.getParameter(gl.TEXTURE_BINDING_2D);
+        const previousActiveTexture = gl.getParameter(gl.ACTIVE_TEXTURE);
+        const blendWasEnabled = gl.isEnabled(gl.BLEND);
+        const depthWasEnabled = gl.isEnabled(gl.DEPTH_TEST);
+        const texture = gl.createTexture();
+        if (!texture) throw new Error("Failed to create a WebGL text texture.");
+        gl.useProgram(resource.program);
+        gl.uniform2f(resource.resolutionLocation, Canvex.canvas.width, Canvex.canvas.height);
+        gl.uniform1i(resource.textureLocation, 0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+        const x0 = x, y0 = y, x1 = x + width, y1 = y + height;
+        gl.bindBuffer(gl.ARRAY_BUFFER, resource.positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(resource.positionLocation);
+        gl.vertexAttribPointer(resource.positionLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, resource.texcoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(resource.texcoordLocation);
+        gl.vertexAttribPointer(resource.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
+        if (!blendWasEnabled) gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        if (depthWasEnabled) gl.disable(gl.DEPTH_TEST);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        if (depthWasEnabled) gl.enable(gl.DEPTH_TEST);
+        if (!blendWasEnabled) gl.disable(gl.BLEND);
+        gl.deleteTexture(texture);
+        gl.activeTexture(previousActiveTexture);
+        gl.bindTexture(gl.TEXTURE_2D, previousTexture);
+        gl.bindBuffer(gl.ARRAY_BUFFER, previousArrayBuffer);
+        gl.useProgram(previousProgram);
+    }
+
+    /**
      * Draws text on the canvas.
      * @param {string|object|Array<*>|number|boolean} str - Text to display.
      * @param {number} x - X coordinate.
@@ -1552,63 +1724,89 @@ export class Shapes {
      * @returns {void}
      */
     static text(str, x, y, maxWidth, maxHeight) {
-        const ctx = Canvas._textCtx();
-        const content = Canvas._normalizeText(str);
-        const lines = Canvas._wrapLines(ctx, content, maxWidth);
-        const { ascent, descent } = Canvas._textMetrics(ctx);
-        const leading = Canvas.textLeading();
-        const state = Canvas._getTextState();
+        const ctx = this.#ctx();
+        this.#assertSupportedContext(ctx);
+        this.#assertFiniteNumbers("Text position", [x, y]);
+        if (typeof maxWidth !== "undefined" && !Number.isFinite(maxWidth)) {
+            throw new TypeError("maxWidth must be a finite number when provided");
+        }
+        if (typeof maxHeight !== "undefined" && !Number.isFinite(maxHeight)) {
+            throw new TypeError("maxHeight must be a finite number when provided");
+        }
+
+        const measureCtx = this.#textCtx();
+        const content = this.#normalizeText(str);
+        const lines = this.#wrapLines(measureCtx, content, maxWidth);
+        const { ascent, descent } = this.#textMetrics(measureCtx);
+        const leading = this.textLeading();
+        const state = this.#getTextState();
         const totalHeight = lines.length > 0
             ? ascent + descent + Math.max(0, lines.length - 1) * leading
             : 0;
-    
+
         let drawX = x;
         if (Number.isFinite(maxWidth)) {
-            if (state.horizontal === Canvas.CENTER) {
-                drawX = x + maxWidth / 2;
-            } else if (state.horizontal === Canvas.RIGHT) {
-                drawX = x + maxWidth;
-            }
+            if (state.horizontal === Shapes.CENTER) drawX = x + maxWidth / 2;
+            else if (state.horizontal === Shapes.RIGHT) drawX = x + maxWidth;
         }
-    
+
         let firstBaseline = y;
         const hasBoxHeight = Number.isFinite(maxHeight);
-    
         if (hasBoxHeight) {
-            if (state.vertical === Canvas.TOP) {
-                firstBaseline = y + ascent;
-            } else if (state.vertical === Canvas.CENTER) {
-                firstBaseline = y + (maxHeight - totalHeight) / 2 + ascent;
-            } else if (state.vertical === Canvas.BOTTOM) {
-                firstBaseline = y + maxHeight - totalHeight + ascent;
-            } else {
-                firstBaseline = y + ascent;
-            }
+            if (state.vertical === Shapes.TOP) firstBaseline = y + ascent;
+            else if (state.vertical === Shapes.CENTER) firstBaseline = y + (maxHeight - totalHeight) / 2 + ascent;
+            else if (state.vertical === Shapes.BOTTOM) firstBaseline = y + maxHeight - totalHeight + ascent;
+            else firstBaseline = y + ascent;
         } else {
-            if (state.vertical === Canvas.TOP) {
-                firstBaseline = y + ascent;
-            } else if (state.vertical === Canvas.CENTER) {
-                firstBaseline = y - totalHeight / 2 + ascent;
-            } else if (state.vertical === Canvas.BOTTOM) {
-                firstBaseline = y - totalHeight + ascent + descent;
-            } else {
-                firstBaseline = y;
-            }
+            if (state.vertical === Shapes.TOP) firstBaseline = y + ascent;
+            else if (state.vertical === Shapes.CENTER) firstBaseline = y - totalHeight / 2 + ascent;
+            else if (state.vertical === Shapes.BOTTOM) firstBaseline = y - totalHeight + ascent + descent;
+            else firstBaseline = y;
         }
-    
+
+        if (this.#isCanvas2D(ctx)) {
+            for (let i = 0; i < lines.length; i += 1) {
+                const baselineY = firstBaseline + i * leading;
+                if (hasBoxHeight && baselineY + descent > y + maxHeight) break;
+                if (Number.isFinite(maxWidth)) ctx.fillText(lines[i], drawX, baselineY, maxWidth);
+                else ctx.fillText(lines[i], drawX, baselineY);
+            }
+            return;
+        }
+
+        const visibleLines = [];
         for (let i = 0; i < lines.length; i += 1) {
             const baselineY = firstBaseline + i * leading;
-            if (hasBoxHeight && baselineY + descent > y + maxHeight) {
-                break;
-            }
-    
-            if (Number.isFinite(maxWidth)) {
-                ctx.fillText(lines[i], drawX, baselineY, maxWidth);
-            } else {
-                ctx.fillText(lines[i], drawX, baselineY);
-            }
+            if (hasBoxHeight && baselineY + descent > y + maxHeight) break;
+            visibleLines.push(lines[i]);
         }
+        if (visibleLines.length === 0) return;
+
+        const measuredWidths = visibleLines.map((line) => measureCtx.measureText(line).width);
+        const boxWidth = Math.max(1, Math.ceil(Number.isFinite(maxWidth) ? maxWidth : Math.max(...measuredWidths, 1)));
+        const boxHeight = Math.max(1, Math.ceil(totalHeight));
+        const boxLeft = Number.isFinite(maxWidth) ? x : state.horizontal === Shapes.CENTER ? x - boxWidth / 2 : state.horizontal === Shapes.RIGHT ? x - boxWidth : x;
+        const boxTop = firstBaseline - ascent;
+        const textCanvas = (typeof OffscreenCanvas !== "undefined") ? new OffscreenCanvas(boxWidth, boxHeight) : document.createElement("canvas");
+        textCanvas.width = boxWidth;
+        textCanvas.height = boxHeight;
+        const textCtx = textCanvas.getContext("2d");
+        if (!textCtx) throw new Error("Unable to create a 2D canvas for WebGL text rasterization.");
+        this.#applyTextState(textCtx);
+        textCtx.clearRect(0, 0, boxWidth, boxHeight);
+        textCtx.fillStyle = this.#currentTextFillStyle(ctx);
+        textCtx.textAlign = "left";
+        textCtx.textBaseline = "alphabetic";
+        for (let i = 0; i < visibleLines.length; i += 1) {
+            const lineWidth = measuredWidths[i] || 0;
+            let lineX = 0;
+            if (state.horizontal === Shapes.CENTER) lineX = (boxWidth - lineWidth) / 2;
+            else if (state.horizontal === Shapes.RIGHT) lineX = boxWidth - lineWidth;
+            textCtx.fillText(visibleLines[i], lineX, ascent + i * leading);
+        }
+        this.#drawTextTexture(ctx, textCanvas, boxLeft, boxTop, boxWidth, boxHeight);
     }
+
     /**
      * Draws an image on the canvas.
      * @param {Image} img - Image instance to draw.
