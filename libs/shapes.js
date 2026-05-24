@@ -1725,6 +1725,7 @@ export class Shapes {
      */
     static text(str, x, y, maxWidth, maxHeight) {
         const ctx = this.#ctx();
+        console.log(ctx);
         this.#assertSupportedContext(ctx);
         this.#assertFiniteNumbers("Text position", [x, y]);
         if (typeof maxWidth !== "undefined" && !Number.isFinite(maxWidth)) {

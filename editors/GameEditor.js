@@ -506,6 +506,107 @@ html,body {
   fill:currentColor;
 }
 
+/* ── STARTUP PROJECT GATE ─────────────────────────────── */
+#project-start-banner {
+  position:absolute;
+  top:44px;
+  left:0;
+  right:0;
+  bottom:28px;
+  z-index:10000;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  pointer-events:auto;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0,212,255,.10), transparent 34%),
+    linear-gradient(180deg, rgba(8,9,13,.88), rgba(8,9,13,.94));
+  border-top:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+}
+#app.project-locked #workspace {
+  pointer-events:none!important;
+  user-select:none;
+  opacity:.28;
+  filter:blur(1px) saturate(.65);
+}
+#app.project-locked #project-start-banner {
+  display:flex!important;
+}
+/* Project gate fix: project modals must appear above the startup banner. */
+#app.project-locked ~ .modal-overlay.open,
+.modal-overlay.open {
+  z-index:20000!important;
+}
+.project-start-card {
+  width:min(620px, calc(100vw - 48px));
+  background:linear-gradient(180deg, rgba(20,23,32,.98), rgba(13,15,22,.98));
+  border:1px solid var(--border2);
+  border-radius:12px;
+  box-shadow:0 24px 80px rgba(0,0,0,.65), 0 0 0 1px rgba(0,212,255,.08) inset;
+  padding:28px;
+  text-align:center;
+}
+.project-start-kicker {
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:2px;
+  color:var(--accent);
+  text-transform:uppercase;
+  margin-bottom:10px;
+}
+.project-start-title {
+  font-size:26px;
+  line-height:1.1;
+  font-weight:700;
+  letter-spacing:.8px;
+  color:var(--text0);
+  margin-bottom:10px;
+}
+.project-start-copy {
+  font-size:14px;
+  line-height:1.55;
+  color:var(--text1);
+  max-width:500px;
+  margin:0 auto 22px;
+}
+.project-start-actions {
+  display:flex;
+  justify-content:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.project-start-btn {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-width:150px;
+  padding:10px 16px;
+  border-radius:var(--radius2);
+  border:1px solid var(--border2);
+  background:var(--bg2);
+  color:var(--text0);
+  font-family:var(--ui);
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:1px;
+  cursor:pointer;
+  transition:all .15s;
+}
+.project-start-btn:hover {
+  border-color:var(--accent);
+  box-shadow:0 0 20px rgba(0,212,255,.12);
+}
+.project-start-btn.primary {
+  background:var(--accent);
+  border-color:var(--accent);
+  color:var(--bg0);
+}
+.project-start-btn.primary:hover {
+  filter:brightness(1.08);
+}
 /* ── WORKSPACE ───────────────────────────────────────── */
 #workspace {
   display:grid;
@@ -1751,7 +1852,7 @@ html,body {
   position:fixed;
   inset:0;
   background:rgba(0,0,0,.7);
-  z-index:1000;
+  z-index:20000;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -2142,7 +2243,7 @@ html,body {
   #mobile-panel-toggle { display: none; }
 }
 `;
-const GAME_EDITOR_MARKUP = `<div id="app">
+const GAME_EDITOR_MARKUP = `<div id="app" class="project-locked">
   <!-- ══ TITLEBAR ══ -->
   <div id="titlebar">
     <div class="tb-logo">
@@ -2217,6 +2318,22 @@ const GAME_EDITOR_MARKUP = `<div id="app">
         <svg viewBox="0 0 10 10"><polygon points="0,0 10,5 0,10"/></svg>
         Run
       </button>
+    </div>
+  </div>
+
+  <!-- ══ STARTUP PROJECT GATE ══ -->
+  <div id="project-start-banner" role="status" aria-live="polite">
+    <div class="project-start-card">
+      <div class="project-start-kicker">Project Required</div>
+      <div class="project-start-title">Create or open a project to start editing</div>
+      <div class="project-start-copy">
+        FORGE editors stay hidden until a project is created or opened, so every asset,
+        block, script, and scene change has a project to save into.
+      </div>
+      <div class="project-start-actions">
+        <button class="project-start-btn primary" onclick="newProject()">📄 Create Project</button>
+        <button class="project-start-btn" onclick="openProject()">📂 Open Project</button>
+      </div>
     </div>
   </div>
 
@@ -2457,6 +2574,16 @@ const GAME_EDITOR_MARKUP = `<div id="app">
 const GAME_EDITOR_RUNTIME = `
 'use strict';
 
+// Shared HTML escape helper used by block editor add-block modal and hotfix renderers.
+// Keep this at runtime top-level so nested IIFEs can resolve \`esc(...)\` lexically.
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>\"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+if (typeof window !== 'undefined' && !window.esc) window.esc = esc;
+
 // ═══════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════
@@ -2473,6 +2600,7 @@ const STATE = {
   selectedId: null,
   running: false,
   undoStack: [], redoStack: [],
+  projectLoaded: false,
   projectName: 'MyGame',
   projectSettings: {
     backgroundColor: '#0d0f18',
@@ -2625,11 +2753,7 @@ function generateBlockDefsFromLibs() {
         method: method.name,
         library: libName,
         ports: method.ports,
-        params: [
-          { k: 'arg1', v: '', type: 'text', optional: true },
-          { k: 'arg2', v: '', type: 'text', optional: true },
-          { k: 'arg3', v: '', type: 'text', optional: true },
-        ]
+        params: (method.params || method.p || []),
       }))
     };
   }
@@ -2789,14 +2913,66 @@ const BLOCK_DEFS = {
 
 // Default scene objects — only camera on fresh load
 STATE.objects = [
-  {id:1, name:'Main Camera', type:'camera', x:400,y:225,w:40,h:30,z:0,rot:0,scaleX:1,scaleY:1,color:'#fbbf24',visible:true,locked:false},
+  {id:1, name:'Main Camera', type:'camera', x:400,y:-225,w:40,h:30,z:0,rot:0,scaleX:1,scaleY:1,color:'#fbbf24',visible:true,locked:false},
 ];
 STATE.nextId = 2;
+
+function updateProjectStartBanner(){
+  const app = document.getElementById('app');
+  const banner = document.getElementById('project-start-banner');
+  const locked = !STATE.projectLoaded;
+
+  if(app){
+    app.classList.toggle('project-locked', locked);
+    app.setAttribute('aria-busy', locked ? 'true' : 'false');
+  }
+
+  if(banner){
+    banner.style.display = locked ? 'flex' : 'none';
+    banner.style.pointerEvents = locked ? 'auto' : 'none';
+    banner.style.zIndex = locked ? '10000' : '';
+    banner.setAttribute('aria-hidden', locked ? 'false' : 'true');
+  }
+
+  if(locked){
+    setStatusMsg?.('Create or open a project to begin');
+  }
+}
+
+function requireProjectLoaded(actionName){
+  if(STATE.projectLoaded) return true;
+  updateProjectStartBanner();
+  const msg = actionName
+    ? 'Create or open a project before ' + actionName + '.'
+    : 'Create or open a project before editing.';
+  setStatusMsg?.(msg);
+  logConsole?.('warn', msg);
+  return false;
+}
+
+function installProjectGateEventFallback(){
+  if(window.__forgeProjectGateInstalled) return;
+  window.__forgeProjectGateInstalled = true;
+  const allowedWhenLocked = '#project-start-banner, #project-start-banner *, #titlebar, #titlebar *, .modal-overlay.open, .modal-overlay.open *';
+  ['pointerdown','mousedown','mouseup','click','dblclick','contextmenu','wheel','dragstart','dragover','drop','touchstart','touchmove'].forEach(type=>{
+    document.addEventListener(type, event=>{
+      if(STATE.projectLoaded) return;
+      const target = event.target;
+      if(target?.closest?.(allowedWhenLocked)) return;
+      updateProjectStartBanner();
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+  });
+}
 
 // ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
+  STATE.projectLoaded = false;
+  installProjectGateEventFallback();
+  updateProjectStartBanner();
   buildAssetTree();
   buildLibList();
   buildPropsPanel();
@@ -2804,11 +2980,16 @@ document.addEventListener('DOMContentLoaded', () => {
   buildBlockEditor();
   initCodeEditor();
   initPixelEditor();
+  // FORGE PATCH: make reloads start centered on the actual 2D play-area.
+  // Without this reset, a stale/default panY of 0 leaves the play-area below the viewport.
+  VP2D.panX = 0; VP2D.panY = 0; VP2D.zoom = 1;
+  center2DViewOnMainCamera();
   renderViewport();
   updateStatusBar();
+  updateProjectStartBanner();
   startFpsCounter();
   logConsole('info', 'FORGE Engine initialized');
-  logConsole('success', \`Project "\${STATE.projectName}" loaded\`);
+  logConsole('info', 'Create a new project or open an existing project to begin editing');
   logConsole('info', \`Libs loaded: \${LIBS.length} modules\`);
 });
 
@@ -2840,6 +3021,7 @@ function toggleMenu(name, evt) {
 }
 
 function setMode(m) {
+  if(!requireProjectLoaded('changing modes')) return;
   STATE.mode = m;
   document.getElementById('mode-2d').classList.toggle('active', m==='2d');
   document.getElementById('mode-3d').classList.toggle('active', m==='3d');
@@ -2858,6 +3040,7 @@ renderViewport();
 }
 
 function setEditorTab(tab) {
+  if(!requireProjectLoaded('switching editors')) return;
   STATE.editorTab = tab;
   const panels = { viewport:'viewport', blocks:'block-editor', code:'code-editor', pixels:'pixel-editor' };
   Object.keys(panels).forEach(t=>{
@@ -2877,6 +3060,7 @@ function setEditorTab(tab) {
 }
 
 function setLeftTab(tab) {
+  if(!requireProjectLoaded('using side panels')) return;
   STATE.leftTab = tab;
   ['assets','libs','props'].forEach(t=>{
     document.getElementById('ltab-'+t)?.classList.toggle('active',t===tab);
@@ -2886,6 +3070,7 @@ function setLeftTab(tab) {
 }
 
 function setRightTab(tab) {
+  if(!requireProjectLoaded('using side panels')) return;
   STATE.rightTab = tab;
   ['scene','inspect'].forEach(t=>{
     document.getElementById('rtab-'+t)?.classList.toggle('active',t===tab);
@@ -2916,6 +3101,7 @@ const SCRIPT_STORE = {};
 const SPRITE_PIXELDATA = {};
 
 function openAsset(name, icon) {
+  if(!requireProjectLoaded('opening assets')) return;
   if (icon === '🖼' || /\\.png$|\\.jpg$|\\.gif$/i.test(name)) {
     // Open pixel editor with this sprite loaded
     STATE.editingSpriteName = name;
@@ -3157,41 +3343,160 @@ const VP2D = {
   panX: 0, panY: 0, zoom: 1,
   isPanning: false, panStartX: 0, panStartY: 0, panStartVX: 0, panStartVY: 0,
 };
+if (typeof window !== 'undefined') window.VP2D = VP2D;
+
+// Editor/playmode reference policy.
+// - The solid play-area background uses the same width/height as play mode.
+// - In 2D, the play-area bottom-left corner is world (0,0).
+// - Positive 2D X moves right; positive 2D Y moves up.
+// - Therefore left/down are negative and right/up are positive in both 2D and 3D.
+// - The 2D play-area background is mirrored over the x-axis, so it extends below y=0.
+// - In 3D, that same play-area becomes the solid floor on world y=0.
+const EDITOR_2D_ORIGIN = 'bottom-left';
+
+function syncViewportBackgroundSize(){
+  const wrap = document.getElementById('vp-wrap');
+  if(!wrap || !vpCanvas) return;
+  wrap.style.width = vpCanvas.width + 'px';
+  wrap.style.height = vpCanvas.height + 'px';
+  vpCanvas.style.width = vpCanvas.width + 'px';
+  vpCanvas.style.height = vpCanvas.height + 'px';
+}
+
+function getPlayModeBackgroundColor(){
+  return STATE.projectSettings?.backgroundColor || '#0d0f18';
+}
+
+function get2DOriginScreenX(W){
+  // Bottom-left origin: x grows to the right.
+  return VP2D.panX;
+}
+function get2DOriginScreenY(H){
+  // Bottom-left origin: y grows upward. With the mirrored play-area, negative y is below this x-axis.
+  return H + VP2D.panY;
+}
+
+function screenToWorld2D(sx, sy){
+  const z = Math.max(0.0001, VP2D.zoom || 1);
+  return {
+    x: (sx - VP2D.panX) / z,
+    y: (vpCanvas.height + VP2D.panY - sy) / z,
+  };
+}
+
+function apply2DWorldTransform(ctx, W, H){
+  // Canvas screen Y points downward; editor world Y points upward.
+  ctx.translate(VP2D.panX, H + VP2D.panY);
+  ctx.scale(VP2D.zoom, -VP2D.zoom);
+}
+
+function zoom2DAtScreenPoint(cx, cy, factor){
+  const before = screenToWorld2D(cx, cy);
+  const next = Math.max(0.1, Math.min(10, VP2D.zoom * factor));
+  VP2D.zoom = next;
+  VP2D.panX = cx - before.x * next;
+  VP2D.panY = cy - vpCanvas.height + before.y * next;
+}
+
+function center2DViewOnObject(obj, zoom){
+  if(!obj || !vpCanvas) return;
+  const z = Math.max(0.1, Math.min(10, Number(zoom) || VP2D.zoom || 1));
+  const ox = Number(obj.x) || 0;
+  const oy = Number(obj.y) || 0;
+  VP2D.zoom = z;
+  // Put the requested world point in the center of the visible canvas.
+  VP2D.panX = (vpCanvas.width / 2) - ox * z;
+  VP2D.panY = (vpCanvas.height / 2) - vpCanvas.height + oy * z;
+  const zoomEl = document.getElementById('vp-zoom');
+  if(zoomEl) zoomEl.textContent = Math.round(VP2D.zoom * 100);
+}
+
+function center2DViewOnMainCamera(){
+  const W = vpCanvas?.width || 800;
+  const H = vpCanvas?.height || 450;
+  const cam = (STATE.objects || []).find(o => o && o.type === 'camera') || null;
+  // FORGE PATCH: In the 2D editor the solid play-area lives from y=-H..0.
+  // If a reloaded project has no camera, or the camera was saved above the play-area
+  // with positive Y, fall back to the center of the solid background: (W/2, -H/2).
+  if(!cam){
+    center2DViewOnObject({ x: W / 2, y: -H / 2 }, VP2D.zoom || 1);
+    return;
+  }
+  const cx = Number(cam.x);
+  const cy = Number(cam.y);
+  if(!Number.isFinite(cx)) cam.x = W / 2;
+  if(!Number.isFinite(cy) || cy > 0) cam.y = -H / 2;
+  center2DViewOnObject(cam, VP2D.zoom || 1);
+}
+
+function draw2DPlayModeReference(ctx, W, H){
+  const safeZoom = Math.max(0.01, VP2D.zoom || 1);
+  const originX = get2DOriginScreenX(W);
+  const originY = get2DOriginScreenY(H);
+  ctx.save();
+  apply2DWorldTransform(ctx, W, H);
+  ctx.fillStyle = getPlayModeBackgroundColor();
+  // Background/play-area is mirrored over the x-axis: x stays positive/right, y extends below y=0.
+  ctx.fillRect(0, -H, W, H);
+  ctx.strokeStyle = 'rgba(0,212,255,.65)';
+  ctx.lineWidth = 2 / safeZoom;
+  ctx.strokeRect(0, -H, W, H);
+  ctx.fillStyle = 'rgba(0,212,255,.9)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 4 / safeZoom, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Draw the origin label in screen space so text is not flipped by the y-up world transform.
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,212,255,.9)';
+  ctx.font = '10px Share Tech Mono';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('(0,0)', originX + 6, originY - 6);
+  ctx.restore();
+}
 
 function renderViewport() {
+  syncViewportBackgroundSize();
   const W = vpCanvas.width, H = vpCanvas.height;
   vpCtx.clearRect(0,0,W,H);
-  vpCtx.fillStyle = STATE.mode==='3d' ? '#0a0d14' : '#0d0f18';
+  // Outer editor space; the actual playmode reference is drawn as a solid rectangle/floor.
+  vpCtx.fillStyle = STATE.mode==='3d' ? '#0a0d14' : '#07080d';
   vpCtx.fillRect(0,0,W,H);
   if(STATE.mode==='3d') draw3DScene(vpCtx,W,H);
   else draw2DScene(vpCtx,W,H);
 }
 
 function draw2DScene(ctx,W,H) {
-  const z = VP2D.zoom, px = VP2D.panX, py = VP2D.panY;
-  // ── Infinite grid ──
+  const z = VP2D.zoom;
+  const originX = get2DOriginScreenX(W);
+  const originY = get2DOriginScreenY(H);
+  // ── Infinite editor grid, anchored to the bottom-left playmode origin ──
   const minor = 20 * z, major = 100 * z;
-  const ox = ((px % minor) + minor) % minor;
-  const oy = ((py % minor) + minor) % minor;
+  const ox = ((originX % minor) + minor) % minor;
+  const oy = ((originY % minor) + minor) % minor;
   // minor grid
   ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1;
   for(let x = ox - minor; x < W + minor; x += minor){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
   for(let y = oy - minor; y < H + minor; y += minor){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
   // major grid
-  const mox = ((px % major) + major) % major;
-  const moy = ((py % major) + major) % major;
+  const mox = ((originX % major) + major) % major;
+  const moy = ((originY % major) + major) % major;
   ctx.strokeStyle='rgba(255,255,255,.09)'; ctx.lineWidth=1;
   for(let x = mox - major; x < W + major; x += major){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
   for(let y = moy - major; y < H + major; y += major){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
   // axis lines
-  const axisX = px, axisY = py;
+  const axisX = originX, axisY = originY;
   if(axisX >= 0 && axisX <= W){ctx.strokeStyle='rgba(0,212,255,.25)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(axisX,0);ctx.lineTo(axisX,H);ctx.stroke();}
   if(axisY >= 0 && axisY <= H){ctx.strokeStyle='rgba(0,212,255,.25)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,axisY);ctx.lineTo(W,axisY);ctx.stroke();}
 
-  // draw objects with pan+zoom transform
+  // Solid playmode background rectangle, including the camera/object reference area.
+  draw2DPlayModeReference(ctx, W, H);
+
+  // Draw objects with the same transform as the playmode reference.
   ctx.save();
-  ctx.translate(px, py);
-  ctx.scale(z, z);
+  apply2DWorldTransform(ctx, W, H);
   const sorted = [...STATE.objects].sort((a,b)=>(a.z||0)-(b.z||0));
   sorted.forEach(obj=>{
     if(!obj.visible) return;
@@ -3199,12 +3504,16 @@ function draw2DScene(ctx,W,H) {
     ctx.translate(obj.x, obj.y);
     if(obj.rot) ctx.rotate(obj.rot*Math.PI/180);
     if(obj.type==='camera'){
+      // Camera position stays mirrored over the x-axis, but the camera glyph/text should render upright.
+      ctx.save();
+      ctx.scale(1,-1);
       ctx.strokeStyle='#fbbf24';ctx.lineWidth=2/z;ctx.setLineDash([4/z,4/z]);
       ctx.strokeRect(-obj.w/2,-obj.h/2,obj.w,obj.h);
       ctx.setLineDash([]);
       ctx.fillStyle='rgba(251,191,36,.08)';ctx.fillRect(-obj.w/2,-obj.h/2,obj.w,obj.h);
       ctx.fillStyle='#fbbf24';ctx.font=\`\${9/z}px Share Tech Mono\`;ctx.textAlign='center';
-      ctx.fillText('CAM',0,obj.h/2+14/z);
+      ctx.fillText('CAM',0,-obj.h/2-8/z);
+      ctx.restore();
     } else if(obj.type==='sprite'){
       const spriteDataURL=getSpriteDataURLForObject(obj);
       if(spriteDataURL){
@@ -3286,11 +3595,12 @@ function draw3DScene(ctx,W,H) {
   const camZ = dist * Math.cos(el) * Math.cos(az);
   const cx = W/2 + VP3D.panX, cy = H/2 + VP3D.panY;
 
-  // Option A: map 2D editor coordinates into a centered 3D world on the ground plane.
-  // 2D center (W/2,H/2) becomes 3D origin (0,0,0). 2D x -> 3D X, 2D y -> 3D Z.
+  // Map editor coordinates onto the 3D y=0 floor.
+  // With the top-right 2D origin, world (0,0,0) is the play-area/floor top-right corner.
+  // Positive 2D X moves left, so fallback 3D X is negative; positive 2D Y maps to +Z.
   const hw = W / 2, hh = H / 2;
-  const worldX = (o) => (typeof o.x3d === 'number') ? o.x3d : ((o.x || 0) - hw);
-  const worldZ = (o) => (typeof o.z3d === 'number') ? o.z3d : ((o.y || 0) - hh);
+  const worldX = (o) => (typeof o.x3d === 'number') ? o.x3d : (EDITOR_2D_ORIGIN === 'top-right' ? -(o.x || 0) : ((o.x || 0) - hw));
+  const worldZ = (o) => (typeof o.z3d === 'number') ? o.z3d : (EDITOR_2D_ORIGIN === 'top-right' ?  (o.y || 0) : ((o.y || 0) - hh));
   const worldY = (o) => (typeof o.y3d === 'number') ? o.y3d : 0;
 
   const fov = 0.9;
@@ -3310,6 +3620,31 @@ function draw3DScene(ctx,W,H) {
     const scale = fov * Math.min(W,H) / vz;
     return { sx: cx + vx*scale, sy: cy - vy*scale, scale };
   }
+
+  function draw3DPlayModeFloor(){
+    const floorCorners = EDITOR_2D_ORIGIN === 'top-right'
+      ? [project(0,0,0), project(-W,0,0), project(-W,0,H), project(0,0,H)]
+      : [project(-hw,0,-hh), project(hw,0,-hh), project(hw,0,hh), project(-hw,0,hh)];
+    if(floorCorners.some(p => !p)) return;
+    ctx.beginPath();
+    ctx.moveTo(floorCorners[0].sx, floorCorners[0].sy);
+    for(let i=1;i<floorCorners.length;i++) ctx.lineTo(floorCorners[i].sx, floorCorners[i].sy);
+    ctx.closePath();
+    ctx.fillStyle = getPlayModeBackgroundColor();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,212,255,.62)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    const o = floorCorners[0];
+    ctx.fillStyle = 'rgba(0,212,255,.9)';
+    ctx.beginPath(); ctx.arc(o.sx, o.sy, 4, 0, Math.PI*2); ctx.fill();
+    ctx.font='10px Share Tech Mono'; ctx.textAlign='right';
+    ctx.fillText('(0,0,0)', o.sx - 6, o.sy - 6);
+    VP3D.drawCalls++;
+  }
+
+  // Solid playmode background in 3D is the floor plane.
+  draw3DPlayModeFloor();
 
   if (STATE.gridVisible) {
   // ── Infinite ground grid ──
@@ -3567,15 +3902,20 @@ vpCanvas.addEventListener('mousemove', e=>{
       const wz2 = wz + dy * Math.cos(az) * speed;
       const wx2 = wx + dy * Math.sin(az) * speed;
       if(typeof obj.x3d === 'number') { obj.x3d = wx2; obj.z3d = wz2; }
-      else { const hw = vpCanvas.width/2, hh = vpCanvas.height/2; obj.x = Math.round(wx2 + hw); obj.y = Math.round(wz2 + hh); }
+      else {
+        const hw = vpCanvas.width/2, hh = vpCanvas.height/2;
+        if(EDITOR_2D_ORIGIN === 'top-right') { obj.x = Math.round(-wx2); obj.y = Math.round(wz2); }
+        else { obj.x = Math.round(wx2 + hw); obj.y = Math.round(wz2 + hh); }
+      }
       renderViewport(); buildHierarchy();
       if(STATE.rightTab==='inspect') renderInspect();
       return;
     }
     if(VP3D.isOrbiting) {
       const dx = e.clientX - VP3D.orbitStart.x, dy = e.clientY - VP3D.orbitStart.y;
-      VP3D.azimuth   = VP3D.orbitStart.az + dx * 0.008;
-      VP3D.elevation = Math.max(-1.4, Math.min(1.4, VP3D.orbitStart.el - dy * 0.006));
+      // Softer orbit sensitivity and conventional drag direction.
+      VP3D.azimuth   = VP3D.orbitStart.az + dx * 0.0055;
+      VP3D.elevation = Math.max(-1.35, Math.min(1.35, VP3D.orbitStart.el - dy * 0.0045));
       renderViewport();
     } else if(VP3D.isPanning3D) {
       VP3D.panX = VP3D.panStart.px + (e.clientX - VP3D.panStart.x);
@@ -3622,23 +3962,24 @@ vpCanvas.addEventListener('mousedown', e=>{
   // ── 3D mode mouse controls (Unity-style) ──
   e.preventDefault();
 
-  // RMB or MMB → pan
-  if(e.button===2 || e.button===1) {
-    VP3D.isPanning3D=true;
-    VP3D.panStart={x:e.clientX,y:e.clientY,px:VP3D.panX,py:VP3D.panY};
-    vpCanvas.style.cursor='move';
-    return;
-  }
-
-  // LMB + Alt → orbit (same as Unity alt-drag)
-  if(e.button===0 && e.altKey) {
+  // 3D navigation is intentionally predictable:
+  //   Alt+LMB or MMB = orbit, RMB or Shift+LMB = pan, LMB = select/drag only.
+  // This prevents accidental orbiting when the user simply clicks empty space.
+  if(e.button===1 || (e.button===0 && e.altKey)) {
     VP3D.isOrbiting=true;
     VP3D.orbitStart={x:e.clientX,y:e.clientY,az:VP3D.azimuth,el:VP3D.elevation};
     vpCanvas.style.cursor='grabbing';
     return;
   }
 
-  // LMB → try to pick object, else orbit
+  if(e.button===2 || (e.button===0 && e.shiftKey)) {
+    VP3D.isPanning3D=true;
+    VP3D.panStart={x:e.clientX,y:e.clientY,px:VP3D.panX,py:VP3D.panY};
+    vpCanvas.style.cursor='move';
+    return;
+  }
+
+  // LMB → select/drag object; blank clicks only clear selection.
   if(e.button===0) {
     const rect = vpCanvas.getBoundingClientRect();
     const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
@@ -3653,9 +3994,7 @@ vpCanvas.addEventListener('mousedown', e=>{
       vpCanvas.style.cursor='grabbing';
     } else {
       if(!hit) selectObject(null);
-      VP3D.isOrbiting=true;
-      VP3D.orbitStart={x:e.clientX,y:e.clientY,az:VP3D.azimuth,el:VP3D.elevation};
-      vpCanvas.style.cursor='grabbing';
+      vpCanvas.style.cursor='grab';
     }
     return;
   }
@@ -3679,12 +4018,8 @@ vpCanvas.addEventListener('wheel',e=>{
   e.preventDefault();
   if(STATE.mode==='2d') {
     const factor = e.deltaY < 0 ? 1.12 : 0.89;
-    const r = vpCanvas.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const prevZ = VP2D.zoom;
-    VP2D.zoom = Math.max(0.1, Math.min(10, VP2D.zoom * factor));
-    VP2D.panX = mx - (mx - VP2D.panX) * (VP2D.zoom / prevZ);
-    VP2D.panY = my - (my - VP2D.panY) * (VP2D.zoom / prevZ);
+    // Zoom around the center of the current screen/view, not the cursor.
+    zoom2DAtScreenPoint(vpCanvas.width / 2, vpCanvas.height / 2, factor);
     document.getElementById('vp-zoom').textContent = Math.round(VP2D.zoom*100);
   } else {
     // Scroll to dolly (move camera forward/back along view axis)
@@ -3704,21 +4039,19 @@ vpCanvas.addEventListener('wheel',e=>{
     if(STATE.mode !== '3d' || STATE.editorTab !== 'viewport') { _3dNavFrame = null; return; }
     const spd = 8 / Math.max(0.1, VP3D.zoom);
     const az = VP3D.azimuth;
-    // Forward/back along camera's horizontal look direction
+    // Explicit signed input axes in 3D:
+    //   left/down = -1, right/up = +1.
+    const axisX = (_keys3d['d'] || _keys3d['arrowright'] ? 1 : 0) + (_keys3d['a'] || _keys3d['arrowleft'] ? -1 : 0);
+    const axisZ = (_keys3d['w'] || _keys3d['arrowup'] ? 1 : 0) + (_keys3d['s'] || _keys3d['arrowdown'] ? -1 : 0);
+    const axisY = (_keys3d['e'] || _keys3d['pageup'] ? 1 : 0) + (_keys3d['q'] || _keys3d['pagedown'] ? -1 : 0);
     const fwdX = Math.sin(az), fwdZ = Math.cos(az);
-    // Right strafe
     const rgtX = Math.cos(az), rgtZ = -Math.sin(az);
-    let mx = 0, mz = 0, my = 0;
-    if(_keys3d['w']||_keys3d['arrowup'])    { mx += fwdX*spd; mz += fwdZ*spd; }
-    if(_keys3d['s']||_keys3d['arrowdown'])  { mx -= fwdX*spd; mz -= fwdZ*spd; }
-    if(_keys3d['a']||_keys3d['arrowleft'])  { mx -= rgtX*spd; mz -= rgtZ*spd; }
-    if(_keys3d['d']||_keys3d['arrowright']) { mx += rgtX*spd; mz += rgtZ*spd; }
-    if(_keys3d['q']||_keys3d['pagedown'])   { my -= spd; }
-    if(_keys3d['e']||_keys3d['pageup'])     { my += spd; }
-    if(mx !== 0 || mz !== 0 || my !== 0) {
-      // Move camera pan offset to simulate fly-through (panning the scene origin)
-      VP3D.panX -= mx;
-      VP3D.panY += mz * 0.5 - my;
+    const mx = (rgtX * axisX + fwdX * axisZ) * spd;
+    const mz = (rgtZ * axisX + fwdZ * axisZ) * spd;
+    const my = axisY * spd;
+    if(axisX !== 0 || axisZ !== 0 || axisY !== 0) {
+      VP3D.panX += mx;
+      VP3D.panY -= mz * 0.5 + my;
       renderViewport();
     }
     _3dNavFrame = requestAnimationFrame(do3DNav);
@@ -3821,9 +4154,7 @@ vpCanvas.addEventListener('touchend', e=>{
 function getVpCoords(e){
   const r=vpCanvas.getBoundingClientRect();
   const sx = e.clientX-r.left, sy = e.clientY-r.top;
-  if(STATE.mode==='2d') {
-    return {x:(sx-VP2D.panX)/VP2D.zoom, y:(sy-VP2D.panY)/VP2D.zoom};
-  }
+  if(STATE.mode==='2d') return screenToWorld2D(sx, sy);
   return {x:sx, y:sy};
 }
 
@@ -3873,7 +4204,7 @@ function toggleSnap(){
   document.getElementById('snap-btn').classList.toggle('active',STATE.snap);
 }
 function resetCamera(){
-  VP2D.panX=0; VP2D.panY=0; VP2D.zoom=1;
+  VP2D.panX=0; VP2D.panY=0; VP2D.zoom=1; center2DViewOnMainCamera();
   VP3D.azimuth=0; VP3D.elevation=0.18; VP3D.distance=720; VP3D.panX=0; VP3D.panY=0; VP3D.zoom=1;
   document.getElementById('vp-zoom').textContent=100;
   renderViewport();
@@ -3889,6 +4220,7 @@ function focusSelected(){
 //  OBJECT MANAGEMENT
 // ═══════════════════════════════════════════════════════
 function addObject(type) {
+  if(!requireProjectLoaded('adding objects')) return;
   pushUndo();
   const defaults={camera:{w:40,h:30,color:'#fbbf24'},sprite:{w:48,h:48,color:'#e94560'},
     shape:{w:100,h:30,color:'#444'},light:{w:80,h:80,color:'#ffe066'},
@@ -3900,6 +4232,10 @@ function addObject(type) {
     type,x:200+Math.random()*400,y:100+Math.random()*250,
     ...d,z:0,rot:0,scaleX:1,scaleY:1,visible:true,locked:false,tag:type
   };
+  if(type==='camera'){
+    // Camera objects live on the mirrored/background side of the x-axis.
+    obj.y = -Math.abs(obj.y);
+  }
   if(type==='sprite'){
     // New sprites intentionally start transparent. They only receive a texture
     // after this sprite is edited in the Pixel Art editor or an asset is assigned.
@@ -4440,6 +4776,7 @@ function formatCode(){
   }
 }
 function runSnippet(){
+  if(!requireProjectLoaded('running code')) return;
   const ta=safeEl('code-area'); if(!ta) return;
   const code=ta.value;
   // Strip import lines (they can't run in a browser snippet context)
@@ -5081,20 +5418,27 @@ function exportPeSprite(){
 // ═══════════════════════════════════════════════════════
 //  PROJECT MANAGEMENT
 // ═══════════════════════════════════════════════════════
-function newProject(){openModal('modal-new');}
+function newProject(){
+  const banner = document.getElementById('project-start-banner');
+  if(banner) banner.style.zIndex = '9998';
+  openModal('modal-new');
+}
 function confirmNewProject(){
   const name=document.getElementById('proj-name').value||'MyGame';
   const mode=document.getElementById('proj-mode').value;
   const w=+document.getElementById('proj-w').value||800;
   const h=+document.getElementById('proj-h').value||450;
   STATE.projectName=name;
-  STATE.objects=[{id:1,name:'Main Camera',type:'camera',x:w/2,y:h/2,w:40,h:30,z:0,rot:0,scaleX:1,scaleY:1,color:'#fbbf24',visible:true,locked:false}];
+  STATE.projectLoaded=true;
+  STATE.objects=[{id:1,name:'Main Camera',type:'camera',x:w/2,y:-h/2,w:40,h:30,z:0,rot:0,scaleX:1,scaleY:1,color:'#fbbf24',visible:true,locked:false}];
   STATE.selectedId=null; STATE.nextId=2;
   vpCanvas.width=w;vpCanvas.height=h;
+  syncViewportBackgroundSize();
   setMode(mode);
   VP2D.panX=0; VP2D.panY=0; VP2D.zoom=1;
+  center2DViewOnMainCamera();
   VP3D.azimuth=0; VP3D.elevation=0.18; VP3D.distance=720; VP3D.zoom=1; VP3D.panX=0; VP3D.panY=0;
-  buildHierarchy();renderViewport();updateStatusBar();
+  buildHierarchy();renderViewport();updateStatusBar();updateProjectStartBanner();
   logConsole('success',\`New project: \${name} (\${mode.toUpperCase()}, \${w}x\${h})\`);
   closeModal('modal-new');
 }
@@ -5116,7 +5460,13 @@ function openProject(){
         if(data.audioData){ STATE.audioData=data.audioData; }
         if(data.mode) setMode(data.mode);
         if(data.name){ STATE.projectName=data.name; }
-        buildHierarchy(); renderViewport(); updateStatusBar();
+        STATE.projectLoaded = true;
+        // FORGE PATCH: project reload/open should land in the middle of the 2D solid play-area.
+        if(STATE.mode === '2d'){
+          VP2D.panX = 0; VP2D.panY = 0; VP2D.zoom = 1;
+          center2DViewOnMainCamera();
+        }
+        buildHierarchy(); renderViewport(); updateStatusBar(); updateProjectStartBanner();
         logConsole('success',\`Opened project: \${data.name||file.name}\`);
       }catch(err){ logConsole('error','Failed to open project: '+err.message); }
     };
@@ -5279,7 +5629,7 @@ function applyProjectSettings(){
     autoHost: !!safeEl('ps-mp-autohost')?.checked,
     syncScene: !!safeEl('ps-mp-sync')?.checked,
   };
-  vpCanvas.width=w; vpCanvas.height=h; vpCanvas.style.imageRendering=settings.renderPixelated?'pixelated':'auto'; setMode(mode); buildHierarchy(); renderViewport(); updateStatusBar();
+  vpCanvas.width=w; vpCanvas.height=h; syncViewportBackgroundSize(); vpCanvas.style.imageRendering=settings.renderPixelated?'pixelated':'auto'; setMode(mode); buildHierarchy(); renderViewport(); updateStatusBar();
   logConsole('success',\`Project settings updated: \${name} \${w}×\${h} \${mode.toUpperCase()} · multiplayer \${settings.multiplayer.enabled?'ON':'OFF'}\`); closeModal('modal-proj-settings');
 }
 
@@ -5584,6 +5934,7 @@ function createBlockCodePlayRuntimeV17(options){
 }
 
 function runGame(){
+  if(!requireProjectLoaded('running the game')) return;
   if(STATE.running) return;
   STATE.running=true;
   // Keep the code editor in sync with the current block graph right before
@@ -5811,7 +6162,11 @@ function startFpsCounter(){
 //  MODALS
 // ═══════════════════════════════════════════════════════
 function openModal(id){document.getElementById(id).classList.add('open');}
-function closeModal(id){document.getElementById(id).classList.remove('open');}
+function closeModal(id){
+  setTimeout(()=>{
+    const banner = document.getElementById('project-start-banner');
+    if(banner && !STATE.projectLoaded) banner.style.zIndex = '10000';
+  }, 0);document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(m=>{
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');});
 });
@@ -6704,7 +7059,8 @@ function bindBlockOrbitV4(){
     if(STATE.editorTab!=='blocks') return;
     e.preventDefault();
     const v=ensureBlockViewV4(); const r=editor.getBoundingClientRect();
-    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    // Center-anchored zoom keeps the block workspace from jumping toward the cursor.
+    const mx=r.width/2, my=r.height/2;
     const before={x:(mx-v.x)/v.scale,y:(my-v.y)/v.scale};
     const next=Math.max(.35,Math.min(2.5,v.scale*(e.deltaY<0?1.08:.925)));
     v.scale=next; v.x=mx-before.x*next; v.y=my-before.y*next; applyBlockViewV4();
@@ -6979,6 +7335,7 @@ function addRunBlocksButtonV4() {
   blockEditor.appendChild(btnContainer);
 }
 function addBlock(){
+  if(!requireProjectLoaded('adding blocks')) return;
   // Button/menu picker only: no textbox, no freeform typing.
   let modal=document.getElementById('modal-add-block');
   if(!modal){
@@ -7829,37 +8186,36 @@ function validateBlocks(){
   if(_oldRenameModal) _oldRenameModal.remove();
 
   const modal = document.createElement('div');
-  modal.id = 'modal-rename-asset';
-  modal.className = 'modal-overlay';
-  modal.innerHTML = \`
-    <div class="modal" style="min-width:520px;max-width:680px">
-      <div class="modal-title">Rename Asset</div>
-      <div class="modal-row">
-        <span class="modal-label">Name</span>
-        <input
-          type="text"
-          class="modal-input"
-          id="ra-base"
-          autocomplete="off"
-          spellcheck="false"
-          style="flex:1;font-family:var(--mono);font-size:13px;padding:8px 10px;"
-        />
+modal.id = 'modal-rename-asset';
+modal.className = 'modal-overlay';
+modal.innerHTML = \`<div class="modal" style="min-width:520px;max-width:680px">
+    <div class="modal-title">Rename Asset</div>
+    <div class="modal-row">
+      <span class="modal-label">Name</span>
+      <input
+        type="text"
+        class="modal-input"
+        id="ra-base"
+        autocomplete="off"
+        spellcheck="false"
+        style="flex:1;font-family:var(--mono);font-size:13px;padding:8px 10px;"
+      />
+    </div>
+    <div class="modal-row">
+      <span class="modal-label">Extension</span>
+      <div class="modal-input" style="display:flex;align-items:center;gap:8px;background:var(--bg2)">
+        <span style="font-family:var(--mono);color:var(--text1)" id="ra-ext"></span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text2)">locked</span>
       </div>
-      <div class="modal-row">
-        <span class="modal-label">Extension</span>
-        <div class="modal-input" style="display:flex;align-items:center;gap:8px;background:var(--bg2)">
-          <span style="font-family:var(--mono);color:var(--text1)" id="ra-ext"></span>
-          <span style="margin-left:auto;font-size:10px;color:var(--text2)">locked</span>
-        </div>
-      </div>
-      <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);font-size:11px;color:var(--text2)">
-        Final: <span id="ra-preview" style="color:var(--accent);font-family:var(--mono)"></span>
-      </div>
-      <div class="modal-actions">
-        <button class="modal-btn cancel" id="ra-cancel-btn">Cancel</button>
-        <button class="modal-btn confirm" id="ra-confirm-btn">Rename</button>
-      </div>
-    </div>\`;
+    </div>
+    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);font-size:11px;color:var(--text2)">
+      Final: <span id="ra-preview" style="color:var(--accent);font-family:var(--mono)"></span>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn cancel" id="ra-cancel-btn">Cancel</button>
+      <button class="modal-btn confirm" id="ra-confirm-btn">Rename</button>
+    </div>
+  </div>\`;
   modal.addEventListener('click', e => { if(e.target === modal) _closeRenameModal(); });
   document.body.appendChild(modal);
 
@@ -10144,6 +10500,364 @@ if(typeof window !== 'undefined'){
   // Do NOT re-expose autosavePixelEditorToSpritePreview here -- the earlier
   // silent version must win to prevent console spam.
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+//  COPILOT HOTFIX V24: complete library-method blocks + readable inputs
+//  - Builds block options from every known lib/module method.
+//  - Replaces generic placeholders with method-specific parameter names.
+//  - Makes the Add Block modal show the full library/method experience.
+//  - Executes method blocks with ordered method parameters, with object fallback.
+// ═══════════════════════════════════════════════════════════════
+(function forgeCompleteLibraryBlocksV24(){
+  if (typeof window !== 'undefined' && window.__forgeCompleteLibraryBlocksV24) return;
+  if (typeof window !== 'undefined') window.__forgeCompleteLibraryBlocksV24 = true;
+
+  var LIB_COLORS_V24 = {
+    Canvex:'#06b6d4', Canvas:'#06b6d4', Shapes:'#7c3aed', Interaction:'#14b8a6', Camera:'#8b5cf6', math:'#3b82f6', Charts:'#22c55e', Events:'#f97316', pointer:'#f97316', Keyboard:'#f97316', Window:'#64748b', controller:'#84cc16', sensor:'#84cc16', Helpers:'#64748b', Triggers:'#1d4ed8', Logic:'#e67e22', DateTime:'#6366f1', Multiplayer:'#059669', Text:'#f59e0b', GUI:'#a855f7', Elements:'#14b8a6', Devices:'#84cc16', List:'#6b7280', Physics:'#2563eb', Transform:'#e74c3c', Color:'#ec4899', Sound:'#1abc9c', Flow:'#0ea5e9', Sprites:'#9b59b6', Image:'#22c55e', PixelArt:'#db2777', Particles:'#d97706', Properties:'#64748b', Models:'#7c3aed', Lights:'#fbbf24'
+  };
+  var LIB_METHODS_V24 = {
+    Canvex:['create','mount','resize','clear','background','loop','start','stop','draw','update'],
+    Canvas:['createCanvas','create','clear','rect','fillRect','strokeRect','text','drawText','line','circle','fill','stroke','size','background'],
+    Shapes:['box','sphere','circle','rect','line','polygon','triangle','ellipse','draw'],
+    Interaction:['click','hover','drag','drop','tap','swipe','on','off','isPressed'],
+    Camera:['create','follow','shake','zoom','setZoom','position','moveTo','reset','background'],
+    math:['dist','clamp','lerp','map','norm','degToRad','radToDeg','vec2','vec3','random','abs','floor','round','ceil','sin','cos','tan','sqrt','pow','min','max'],
+    Charts:['bar','line','pie','scatter','clear','update','setData'],
+    Events:['onKeyPress','onKeyRelease','onClick','onCollision','onTimer','onTrigger','emit','on','off','once'],
+    pointer:['onClick','onMove','onDown','onUp','position','x','y','isDown'],
+    Keyboard:['onKeyPress','onKeyRelease','isDown','pressed','released'],
+    Window:['width','height','resize','fullscreen','title','onResize'],
+    controller:['connect','disconnect','button','axis','vibrate','isConnected'],
+    sensor:['accelerometer','gyroscope','orientation','onChange'],
+    Helpers:['log','wait','uuid','randomId','choose','range','clone','debounce','throttle'],
+    Triggers:['create','remove','isInside','enter','exit','onEnter','onExit'],
+    Logic:['if','compare','and','or','not','switch','equals','greater','less'],
+    DateTime:['now','format','timestamp','delay','timer','interval'],
+    Multiplayer:['connect','disconnect','host','join','send','broadcast','onMessage','sync','playerCount'],
+    Text:['draw','text','measure','typewriter','font','align','color'],
+    GUI:['button','label','panel','slider','checkbox','input','show','hide'],
+    Elements:['create','remove','set','get','style','position','size','text','html'],
+    Devices:['keyboard','pointer','gamepad','touch','vibrate'],
+    List:['add','remove','clear','get','set','contains','length','shuffle','sort','filter','map'],
+    Physics:['applyForce','applyImpulse','setVelocity','stop','setGravity','isColliding','raycast','enable','init','step'],
+    Transform:['position','translate','rotate','scale','lookAt','lerp','size','flip'],
+    Color:['fill','randomColor','lerpColor','tint','hex','rgb','random','lighten','darken'],
+    Sound:['play','stop','stopAll','volume','fadeIn','fadeOut','pause','resume'],
+    Flow:['sequence','delay','loop','while','wait','run','stop','once'],
+    Sprites:['create','load','draw','playAnimation','stopAnimation','setFrame','alpha','tint','visible'],
+    Image:['load','draw','crop','resize','filter','save','fromURL'],
+    PixelArt:['create','setPixel','getPixel','fill','clear','resize','exportPNG','importPNG'],
+    Particles:['emit','start','stop','gravity','setGravity','rate','burst'],
+    Properties:['get','set','has','remove','watch','bind'],
+    Models:['load','draw','setRotation','setScale','position','animate'],
+    Lights:['add','remove','intensity','flicker','color','position']
+  };
+  var PARAMS_V24 = {
+    create:[{k:'name',v:'',type:'text'}], createCanvas:[{k:'id',v:'main',type:'text'},{k:'w',v:'800',type:'number'},{k:'h',v:'450',type:'number'}], resize:[{k:'w',v:'800',type:'number'},{k:'h',v:'450',type:'number'}], size:[{k:'target',v:'',type:'target'},{k:'w',v:'48',type:'number'},{k:'h',v:'48',type:'number'}],
+    clear:[{k:'color',v:'#0d0f18',type:'color'}], background:[{k:'color',v:'#0d0f18',type:'color'}], fill:[{k:'color',v:'#ffffff',type:'color'}], stroke:[{k:'color',v:'#ffffff',type:'color'},{k:'width',v:'1',type:'number'}], rect:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'w',v:'100',type:'number'},{k:'h',v:'100',type:'number'}], fillRect:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'w',v:'100',type:'number'},{k:'h',v:'100',type:'number'},{k:'color',v:'#ff0000',type:'color'}], strokeRect:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'w',v:'100',type:'number'},{k:'h',v:'100',type:'number'},{k:'color',v:'#ffffff',type:'color'}], circle:[{k:'x',v:'100',type:'number'},{k:'y',v:'100',type:'number'},{k:'r',v:'40',type:'number'},{k:'color',v:'#00d4ff',type:'color'}], line:[{k:'x1',v:'0',type:'number'},{k:'y1',v:'0',type:'number'},{k:'x2',v:'100',type:'number'},{k:'y2',v:'100',type:'number'}], polygon:[{k:'target',v:'',type:'target'},{k:'sides',v:'6',type:'number'},{k:'color',v:'#7c3aed',type:'color'}], box:[{k:'target',v:'',type:'target'},{k:'color',v:'#ff0000',type:'color'}], sphere:[{k:'target',v:'',type:'target'},{k:'radius',v:'1',type:'number'}], triangle:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'size',v:'50',type:'number'}], ellipse:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'rx',v:'50',type:'number'},{k:'ry',v:'25',type:'number'}],
+    text:[{k:'text',v:'Hello',type:'text'},{k:'x',v:'20',type:'number'},{k:'y',v:'30',type:'number'}], drawText:[{k:'text',v:'Hello',type:'text'},{k:'x',v:'20',type:'number'},{k:'y',v:'30',type:'number'},{k:'size',v:'16',type:'number'},{k:'color',v:'#ffffff',type:'color'}], draw:[{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}], measure:[{k:'text',v:'Hello',type:'text'}], typewriter:[{k:'target',v:'',type:'target'},{k:'text',v:'Hello World',type:'text'},{k:'ms',v:'50',type:'number'}], font:[{k:'family',v:'Inter',type:'text'},{k:'size',v:'16',type:'number'}], align:[{k:'align',v:'left',type:'select',options:['left','center','right']}],
+    load:[{k:'src',v:'asset.png',type:'text'},{k:'target',v:'',type:'target'}], fromURL:[{k:'url',v:'https://example.com/image.png',type:'text'}], crop:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'w',v:'32',type:'number'},{k:'h',v:'32',type:'number'}], filter:[{k:'name',v:'grayscale',type:'select',options:['grayscale','blur','brightness','contrast','invert']}], save:[{k:'name',v:'asset.png',type:'text'}],
+    follow:[{k:'target',v:'',type:'target'},{k:'speed',v:'0.1',type:'number'}], shake:[{k:'mag',v:'5',type:'number'},{k:'ms',v:'300',type:'number'}], zoom:[{k:'zoom',v:'1.5',type:'number'}], setZoom:[{k:'zoom',v:'1.5',type:'number'}], position:[{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}], moveTo:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}], translate:[{k:'target',v:'',type:'target'},{k:'dx',v:'0',type:'number'},{k:'dy',v:'0',type:'number'}], rotate:[{k:'target',v:'',type:'target'},{k:'deg',v:'45',type:'number'}], scale:[{k:'target',v:'',type:'target'},{k:'x',v:'1',type:'number'},{k:'y',v:'1',type:'number'}], lookAt:[{k:'source',v:'',type:'target'},{k:'dest',v:'',type:'target'}], lerp:[{k:'a',v:'0',type:'number'},{k:'b',v:'1',type:'number'},{k:'t',v:'0.5',type:'number'}], flip:[{k:'target',v:'',type:'target'},{k:'axis',v:'x',type:'select',options:['x','y','both']}],
+    play:[{k:'src',v:'sound.wav',type:'text'},{k:'volume',v:'1',type:'number'},{k:'loop',v:'false',type:'select',options:['false','true']}], stop:[{k:'target',v:'',type:'target'}], stopAll:[], volume:[{k:'vol',v:'0.8',type:'number'}], fadeIn:[{k:'src',v:'music.mp3',type:'text'},{k:'ms',v:'1000',type:'number'}], fadeOut:[{k:'src',v:'music.mp3',type:'text'},{k:'ms',v:'500',type:'number'}], pause:[{k:'src',v:'music.mp3',type:'text'}], resume:[{k:'src',v:'music.mp3',type:'text'}],
+    applyForce:[{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'-300',type:'number'}], applyImpulse:[{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'-500',type:'number'}], setVelocity:[{k:'target',v:'',type:'target'},{k:'x',v:'5',type:'number'},{k:'y',v:'0',type:'number'}], setGravity:[{k:'g',v:'9.8',type:'number'}], gravity:[{k:'g',v:'50',type:'number'}], isColliding:[{k:'a',v:'',type:'target'},{k:'b',v:'',type:'target'}], raycast:[{k:'fromX',v:'0',type:'number'},{k:'fromY',v:'0',type:'number'},{k:'angle',v:'0',type:'number'},{k:'dist',v:'200',type:'number'}], enable:[{k:'target',v:'',type:'target'},{k:'mass',v:'1',type:'number'}], init:[{k:'target',v:'',type:'target'},{k:'mass',v:'1',type:'number'}], step:[{k:'dt',v:'0.016',type:'number'}],
+    playAnimation:[{k:'target',v:'',type:'target'},{k:'anim',v:'run',type:'text'},{k:'loop',v:'true',type:'select',options:['true','false']}], stopAnimation:[{k:'target',v:'',type:'target'}], setFrame:[{k:'target',v:'',type:'target'},{k:'frame',v:'0',type:'number'}], alpha:[{k:'target',v:'',type:'target'},{k:'val',v:'1',type:'number'}], tint:[{k:'target',v:'',type:'target'},{k:'color',v:'#ffffff',type:'color'}], visible:[{k:'target',v:'',type:'target'},{k:'visible',v:'true',type:'select',options:['true','false']}],
+    emit:[{k:'event',v:'custom',type:'text'},{k:'data',v:'{}',type:'text'}], on:[{k:'event',v:'custom',type:'text'}], off:[{k:'event',v:'custom',type:'text'}], once:[{k:'event',v:'ready',type:'text'}], onKeyPress:[{k:'key',v:'Space',type:'select',options:['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','w','a','s','d','Shift','Control']}], onKeyRelease:[{k:'key',v:'Space',type:'select',options:['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','w','a','s','d']}], onClick:[{k:'button',v:'left',type:'select',options:['left','right','middle']}], onCollision:[{k:'a',v:'',type:'target'},{k:'b',v:'',type:'target'}], onTimer:[{k:'ms',v:'1000',type:'number'},{k:'repeat',v:'true',type:'select',options:['true','false']}], onTrigger:[{k:'zone',v:'',type:'target'}],
+    delay:[{k:'ms',v:'500',type:'number'}], loop:[{k:'n',v:'10',type:'number'}], sequence:[], wait:[{k:'frames',v:'60',type:'number'}], run:[{k:'fn',v:'myFunction',type:'text'}], while:[{k:'condition',v:'true',type:'text'}],
+    compare:[{k:'op',v:'==',type:'select',options:['==','!=','>','<','>=','<=']},{k:'a',v:'0',type:'text'},{k:'b',v:'0',type:'text'}], and:[{k:'a',v:'true',type:'select',options:['true','false']},{k:'b',v:'true',type:'select',options:['true','false']}], or:[{k:'a',v:'true',type:'select',options:['true','false']},{k:'b',v:'false',type:'select',options:['true','false']}], not:[{k:'value',v:'false',type:'select',options:['true','false']}], switch:[{k:'value',v:'0',type:'text'}], equals:[{k:'a',v:'0',type:'text'},{k:'b',v:'0',type:'text'}], greater:[{k:'a',v:'1',type:'number'},{k:'b',v:'0',type:'number'}], less:[{k:'a',v:'0',type:'number'},{k:'b',v:'1',type:'number'}],
+    hex:[{k:'value',v:'#ff0000',type:'color'}], rgb:[{k:'r',v:'255',type:'number'},{k:'g',v:'0',type:'number'},{k:'b',v:'0',type:'number'}], randomColor:[], random:[{k:'min',v:'0',type:'number'},{k:'max',v:'1',type:'number'}], lerpColor:[{k:'from',v:'#000000',type:'color'},{k:'to',v:'#ffffff',type:'color'},{k:'t',v:'0.5',type:'number'}], lighten:[{k:'color',v:'#888888',type:'color'},{k:'amount',v:'30',type:'number'}], darken:[{k:'color',v:'#888888',type:'color'},{k:'amount',v:'30',type:'number'}],
+    dist:[{k:'x1',v:'0',type:'number'},{k:'y1',v:'0',type:'number'},{k:'x2',v:'100',type:'number'},{k:'y2',v:'100',type:'number'}], clamp:[{k:'v',v:'0',type:'number'},{k:'min',v:'0',type:'number'},{k:'max',v:'1',type:'number'}], map:[{k:'v',v:'0',type:'number'},{k:'inMin',v:'0',type:'number'},{k:'inMax',v:'1',type:'number'},{k:'outMin',v:'0',type:'number'},{k:'outMax',v:'100',type:'number'}], norm:[{k:'v',v:'0',type:'number'},{k:'min',v:'0',type:'number'},{k:'max',v:'1',type:'number'}], degToRad:[{k:'deg',v:'90',type:'number'}], radToDeg:[{k:'rad',v:'3.14159',type:'number'}], vec2:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}], vec3:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'z',v:'0',type:'number'}], abs:[{k:'v',v:'0',type:'number'}], floor:[{k:'v',v:'0',type:'number'}], round:[{k:'v',v:'0',type:'number'}], ceil:[{k:'v',v:'0',type:'number'}], sin:[{k:'angle',v:'0',type:'number'}], cos:[{k:'angle',v:'0',type:'number'}], tan:[{k:'angle',v:'0',type:'number'}], sqrt:[{k:'v',v:'4',type:'number'}], pow:[{k:'base',v:'2',type:'number'},{k:'exp',v:'2',type:'number'}], min:[{k:'a',v:'0',type:'number'},{k:'b',v:'1',type:'number'}], max:[{k:'a',v:'0',type:'number'},{k:'b',v:'1',type:'number'}],
+    add:[{k:'target',v:'',type:'target'},{k:'value',v:'',type:'text'}], remove:[{k:'target',v:'',type:'target'}], get:[{k:'target',v:'',type:'target'},{k:'key',v:'name',type:'text'}], set:[{k:'target',v:'',type:'target'},{k:'key',v:'name',type:'text'},{k:'value',v:'',type:'text'}], has:[{k:'target',v:'',type:'target'},{k:'key',v:'name',type:'text'}], contains:[{k:'list',v:'',type:'text'},{k:'value',v:'',type:'text'}], length:[{k:'list',v:'',type:'text'}], shuffle:[{k:'list',v:'',type:'text'}], sort:[{k:'list',v:'',type:'text'}], filter:[{k:'list',v:'',type:'text'},{k:'condition',v:'true',type:'text'}],
+    button:[{k:'label',v:'Click Me',type:'text'},{k:'x',v:'10',type:'number'},{k:'y',v:'10',type:'number'}], label:[{k:'text',v:'Score: 0',type:'text'},{k:'x',v:'10',type:'number'},{k:'y',v:'30',type:'number'}], panel:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'w',v:'200',type:'number'},{k:'h',v:'120',type:'number'}], slider:[{k:'min',v:'0',type:'number'},{k:'max',v:'100',type:'number'},{k:'value',v:'50',type:'number'}], checkbox:[{k:'label',v:'Enabled',type:'text'},{k:'checked',v:'false',type:'select',options:['false','true']}], input:[{k:'placeholder',v:'Type here',type:'text'}], show:[{k:'target',v:'',type:'target'}], hide:[{k:'target',v:'',type:'target'}],
+    connect:[{k:'url',v:'',type:'text'}], disconnect:[], host:[{k:'room',v:'main',type:'text'}], join:[{k:'room',v:'main',type:'text'}], send:[{k:'event',v:'message',type:'text'},{k:'data',v:'{}',type:'text'}], broadcast:[{k:'event',v:'message',type:'text'},{k:'data',v:'{}',type:'text'}], onMessage:[{k:'event',v:'message',type:'text'}], sync:[{k:'target',v:'',type:'target'}], playerCount:[],
+    setPixel:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'color',v:'#ffffff',type:'color'}], getPixel:[{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}], exportPNG:[{k:'name',v:'sprite.png',type:'text'}], importPNG:[{k:'src',v:'sprite.png',type:'text'}], rate:[{k:'rate',v:'10',type:'number'}], burst:[{k:'count',v:'20',type:'number'}], intensity:[{k:'target',v:'',type:'target'},{k:'val',v:'1',type:'number'}], flicker:[{k:'target',v:'',type:'target'},{k:'speed',v:'0.1',type:'number'},{k:'range',v:'0.3',type:'number'}], color:[{k:'color',v:'#ffffff',type:'color'}], setRotation:[{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'},{k:'z',v:'0',type:'number'}], setScale:[{k:'target',v:'',type:'target'},{k:'s',v:'1',type:'number'}]
+  };
+  function cloneParamsV24(params){
+    // params is usually an array of {k,v,type,...}, but some library metadata
+    // can arrive as an object/non-array. Normalize first so .map never throws.
+    var list = Array.isArray(params) ? params : [];
+    return list.map(function(p){
+      var q={};
+      Object.keys(p||{}).forEach(function(k){ q[k]=Array.isArray(p[k])?p[k].slice():p[k]; });
+      return q;
+    });
+  }
+  function humanV24(name){ return String(name||'method').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/^./,function(c){return c.toUpperCase();}); }
+  function paramSpecV24(lib, method){
+    if (PARAMS_V24[method]) return cloneParamsV24(PARAMS_V24[method]);
+    var lower=String(method||'').toLowerCase();
+    if (lower.indexOf('color')>=0) return [{k:'target',v:'',type:'target'},{k:'color',v:'#ffffff',type:'color'}];
+    if (lower.indexOf('position')>=0 || lower.indexOf('move')>=0) return [{k:'target',v:'',type:'target'},{k:'x',v:'0',type:'number'},{k:'y',v:'0',type:'number'}];
+    if (lower.indexOf('load')>=0) return [{k:'src',v:'asset.png',type:'text'},{k:'target',v:'',type:'target'}];
+    if (lower.indexOf('create')>=0 || lower.indexOf('add')>=0) return [{k:'target',v:'',type:'target'},{k:'name',v:'',type:'text'}];
+    if (lower.indexOf('remove')>=0 || lower.indexOf('delete')>=0 || lower.indexOf('stop')>=0) return [{k:'target',v:'',type:'target'}];
+    return [];
+  }
+  function portsV24(method){
+    var m=String(method||'');
+    if (/^on[A-Z]/.test(m) || m==='on' || m==='once' || m==='onMessage') return {in:[],out:['then']};
+    if (m==='compare' || m==='isColliding' || m==='isInside' || m==='has' || m==='contains') return {in:['exec'],out:['true','false']};
+    if (['dist','clamp','lerp','map','norm','degToRad','radToDeg','vec2','vec3','random','abs','floor','round','ceil','sin','cos','tan','sqrt','pow','min','max','measure','get','length','position','width','height','playerCount'].indexOf(m)>=0) return {in:['exec'],out:['result']};
+    return {in:['exec'],out:['done']};
+  }
+  function discoverMethodsV24(lib){
+    var out = {};
+    (LIB_METHODS_V24[lib] || []).forEach(function(m){ out[m]=true; });
+    try { if (typeof FORGE_LIB_METHODS !== 'undefined' && FORGE_LIB_METHODS[lib]) FORGE_LIB_METHODS[lib].forEach(function(s){ if(s && s.m) out[s.m]=true; }); } catch(_) {}
+    try {
+      var sources=[];
+      if (window.ForgeClasses) sources.push(window.ForgeClasses[lib], window.ForgeClasses[String(lib).toLowerCase()]);
+      if (window.ForgeLibs) sources.push(window.ForgeLibs[lib], window.ForgeLibs[String(lib).toLowerCase()]);
+      if (window.ForgeMethods) sources.push(window.ForgeMethods[lib]);
+      sources.push(window[lib]);
+      sources.filter(Boolean).forEach(function(obj){
+        var scan=function(o){
+          if(!o) return;
+          Object.getOwnPropertyNames(Object(o)).forEach(function(k){
+            if(k==='constructor' || k==='default' || k.indexOf('__')===0) return;
+            try { var d=Object.getOwnPropertyDescriptor(Object(o),k); if(d && typeof d.value==='function') out[k]=true; } catch(_) {}
+          });
+        };
+        scan(obj); scan(obj.prototype); if(obj.default) scan(obj.default);
+      });
+    } catch(_) {}
+    return Object.keys(out).sort(function(a,b){ return a.localeCompare(b); });
+  }
+  function buildDefsV24(){
+    var defs={};
+    Object.keys(LIB_METHODS_V24).forEach(function(lib){
+      var color=LIB_COLORS_V24[lib] || '#888';
+      defs[lib]={ color:color, bg:'rgba(128,128,128,.12)', types:discoverMethodsV24(lib).map(function(method){
+        return { name:humanV24(method), method:method, library:lib, ports:portsV24(method), params:paramSpecV24(lib, method) };
+      })};
+    });
+    return defs;
+  }
+  function applyDefsV24(){
+    var defs=buildDefsV24();
+    Object.keys(defs).forEach(function(cat){ BLOCK_DEFS[cat]=defs[cat]; });
+    return defs;
+  }
+  try { generateBlockDefsFromLibs = function(){ return buildDefsV24(); }; } catch(_) {}
+  applyDefsV24();
+  if (typeof window !== 'undefined') {
+    window.FORGE_LIB_METHODS_V24 = LIB_METHODS_V24;
+    window.refreshForgeLibraryBlocks = function(){ var d=applyDefsV24(); try{ if(STATE.editorTab==='blocks') renderBlockEditor(); }catch(_){} return d; };
+    var ready = window.ForgeGlobalImportsReady || (window.ensureForgeGlobals && window.ensureForgeGlobals());
+    if (ready && typeof ready.then === 'function') ready.then(function(){ window.refreshForgeLibraryBlocks(); }).catch(function(){});
+  }
+
+  addBlock = function(){
+    applyDefsV24();
+    var modal=document.getElementById('modal-add-block');
+    if(!modal){
+      modal=document.createElement('div'); modal.id='modal-add-block'; modal.className='modal-overlay';
+      modal.innerHTML='<div class="modal" style="min-width:720px;max-width:920px"><div class="modal-title">Add Block</div><div style="font-size:12px;color:var(--text1);margin-bottom:12px">Pick a library and method. Inputs below are real method parameters with clear names.</div><div class="modal-row"><span class="modal-label">Library</span><div class="ab-picker" id="ab-cat-picker"><button type="button" class="ab-picker-btn" id="ab-cat-btn">Library</button><div class="ab-picker-menu" id="ab-cat-menu"></div></div></div><div class="modal-row"><span class="modal-label">Method</span><div class="ab-picker" id="ab-type-picker"><button type="button" class="ab-picker-btn" id="ab-type-btn">Method</button><div class="ab-picker-menu" id="ab-type-menu"></div></div></div><div id="ab-block-preview" style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg1);font-size:11px;color:var(--text2);min-height:74px;line-height:1.45"></div><div class="modal-actions"><button class="modal-btn cancel" onclick="closeModal(\\'modal-add-block\\')">Cancel</button><button class="modal-btn confirm" id="ab-confirm-btn" onclick="confirmAddBlock()">Add Block</button></div></div>';
+      if(!document.getElementById('ab-picker-style')){ var style=document.createElement('style'); style.id='ab-picker-style'; style.textContent='.ab-picker{position:relative;flex:1}.ab-picker-btn{width:100%;text-align:left;background:var(--bg3);border:1px solid var(--border2);color:var(--text0);padding:9px 34px 9px 12px;font-size:12px;border-radius:var(--radius);font-family:var(--ui);font-weight:700;cursor:pointer}.ab-picker-btn:after{content:"▾";position:absolute;right:12px;color:var(--accent)}.ab-picker.open .ab-picker-btn,.ab-picker-btn:hover{border-color:var(--accent);background:rgba(0,212,255,.08)}.ab-picker-menu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);max-height:320px;overflow:auto;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius2);box-shadow:0 12px 36px rgba(0,0,0,.65);z-index:2000;padding:4px}.ab-picker.open .ab-picker-menu{display:block}.ab-menu-item{padding:7px 10px;border-radius:var(--radius);font-size:12px;color:var(--text1);cursor:pointer;display:flex;align-items:center;gap:8px}.ab-menu-item:hover,.ab-menu-item.active{background:rgba(0,212,255,.10);color:var(--accent)}.ab-color-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}.ab-param-chip{display:inline-block;margin:3px 4px 0 0;padding:2px 6px;border:1px solid var(--border2);border-radius:999px;color:var(--text1);font-family:var(--mono);font-size:10px}'; document.head.appendChild(style); }
+      document.body.appendChild(modal);
+    }
+    var allCats=BLOCK_DEFS, cats=Object.keys(allCats).sort(function(a,b){return a.localeCompare(b);});
+    var currentCat=(window._addBlockState&&window._addBlockState.cat&&allCats[window._addBlockState.cat])?window._addBlockState.cat:cats[0];
+    var currentType=(window._addBlockState&&window._addBlockState.type)||((allCats[currentCat].types||[])[0]||{}).name;
+    var catBtn=document.getElementById('ab-cat-btn'), typeBtn=document.getElementById('ab-type-btn'), catMenu=document.getElementById('ab-cat-menu'), typeMenu=document.getElementById('ab-type-menu'), catPicker=document.getElementById('ab-cat-picker'), typePicker=document.getElementById('ab-type-picker'), preview=document.getElementById('ab-block-preview');
+    function closeMenus(){ catPicker.classList.remove('open'); typePicker.classList.remove('open'); }
+    function item(label,color,active,click){ var div=document.createElement('div'); div.className='ab-menu-item'+(active?' active':''); div.innerHTML=(color?'<span class="ab-color-dot" style="background:'+color+'"></span>':'')+'<span>'+esc(label)+'</span>'; div.onclick=function(e){ e.stopPropagation(); click(); closeMenus(); }; return div; }
+    function render(){
+      catMenu.innerHTML=''; cats.forEach(function(cat){ catMenu.appendChild(item(cat, allCats[cat].color, cat===currentCat, function(){ currentCat=cat; currentType=((allCats[cat].types||[])[0]||{}).name; render(); })); });
+      typeMenu.innerHTML=''; (allCats[currentCat].types||[]).forEach(function(def){ typeMenu.appendChild(item((def.method||def.name)+'  —  '+def.name, null, def.name===currentType, function(){ currentType=def.name; render(); })); });
+      var def=(allCats[currentCat].types||[]).filter(function(t){return t.name===currentType;})[0] || (allCats[currentCat].types||[])[0]; if(!def){ preview.textContent='No methods available.'; return; }
+      currentType=def.name; catBtn.textContent=currentCat; typeBtn.textContent=(def.method||def.name);
+      var params=(def.params||[]).map(function(p){ return '<span class="ab-param-chip">'+esc(p.k)+' : '+esc(p.type||'text')+'</span>'; }).join('') || '<span style="color:var(--text3)">No inputs</span>';
+      preview.innerHTML='<div style="font-weight:700;color:'+allCats[currentCat].color+';margin-bottom:4px">'+esc(currentCat)+'.'+esc(def.method||def.name)+'()</div><div style="color:var(--text1);margin-bottom:5px">Block label: '+esc(def.name)+'</div><div>Inputs: '+params+'</div><div style="margin-top:4px">Flow: In '+esc(((def.ports&&def.ports.in)||[]).join(', ')||'—')+' · Out '+esc(((def.ports&&def.ports.out)||[]).join(', ')||'—')+'</div>';
+      window._addBlockState={cat:currentCat,type:def.name};
+    }
+    catBtn.onclick=function(e){ e.stopPropagation(); typePicker.classList.remove('open'); catPicker.classList.toggle('open'); };
+    typeBtn.onclick=function(e){ e.stopPropagation(); catPicker.classList.remove('open'); typePicker.classList.toggle('open'); };
+    modal.onclick=function(e){ if(!e.target.closest('.ab-picker')) closeMenus(); if(e.target===modal) modal.classList.remove('open'); };
+    render(); modal.classList.add('open');
+  };
+  confirmAddBlock = function(){
+    applyDefsV24();
+    var state=window._addBlockState||{}, cat=state.cat, typeName=state.type;
+    if(!cat||!typeName||!BLOCK_DEFS[cat]){ logConsole('warn','Select a library method first'); return; }
+    var def=(BLOCK_DEFS[cat].types||[]).filter(function(t){return t.name===typeName;})[0];
+    if(!def){ logConsole('error','Method block not found'); return; }
+    snapshotBlocks();
+    var id=Math.max.apply(Math,[BE.nextId].concat(BE.blocks.map(function(b){return b.id+1;}),[1])); BE.nextId=id+1;
+    BE.blocks.push({ id:id, cat:cat, type:def.name, library:def.library||cat, method:def.method, x:120+Math.random()*400, y:80+Math.random()*300, params:cloneParamsV24(def.params), ports:cloneV4(def.ports) });
+    BE.selected=id; renderBlockEditor(); syncCodeFromBlocksV4('method block added'); logConsole('success','Added '+cat+'.'+(def.method||def.name)+' block'); closeModal('modal-add-block');
+  };
+  if (typeof window !== 'undefined') { window.addBlock=addBlock; window.confirmAddBlock=confirmAddBlock; }
+
+  var originalExecuteBlockV24 = (typeof executeBlockV4 === 'function') ? executeBlockV4 : null;
+  executeBlockV4 = async function(block){
+    var values={}, ordered=[]; (block.params||[]).forEach(function(p){ var val=p.v; if(val==='true') val=true; else if(val==='false') val=false; else if(val!=='' && !isNaN(val)) val=Number(val); values[p.k]=val; ordered.push(val); });
+    var rawLibName=String(block.library||block.lib||block.cat||'').trim();
+    var className=(window.canonicalForgeClassName?window.canonicalForgeClassName(rawLibName):rawLibName);
+    var methodName=block.method || (typeof blockTypeToMethodV4==='function' ? blockTypeToMethodV4(block.cat, block.type) : String(block.type||'').replace(/\s+(.)/g,function(_,c){return c.toUpperCase();}).replace(/^./,function(c){return c.toLowerCase();}));
+    try{
+      if(window.ensureForgeGlobals) await window.ensureForgeGlobals(); else if(window.ForgeGlobalImportsReady) await window.ForgeGlobalImportsReady;
+      var candidates=[window[className], window.ForgeClasses&&window.ForgeClasses[className], window.ForgeClasses&&window.ForgeClasses[String(className).toLowerCase()], window.ForgeLibs&&window.ForgeLibs[className], window.ForgeLibs&&window.ForgeLibs[String(className).toLowerCase()], window.ForgeMethods&&window.ForgeMethods[className]].filter(Boolean);
+      var target=null, fn=null;
+      for(var i=0;i<candidates.length;i++){ var c=candidates[i]; if(c&&typeof c[methodName]==='function'){target=c;fn=c[methodName];break;} if(c&&c.default&&typeof c.default[methodName]==='function'){target=c.default;fn=c.default[methodName];break;} }
+      if(fn){ try{ await fn.apply(target, ordered); } catch(posErr){ await fn.call(target, values); } logConsole('info','  ↳ '+className+'.'+methodName+'('+ (block.params||[]).map(function(p){return p.k;}).join(', ') +') executed'); }
+      else if(originalExecuteBlockV24) await originalExecuteBlockV24(block);
+      else logConsole('warn','  ↳ Method '+className+'.'+methodName+'() not found');
+    }catch(err){ logConsole('error','  ↳ Error: '+(err&&err.message?err.message:err)); }
+  };
+  if (typeof window !== 'undefined') window.executeBlockV4=executeBlockV4;
+})();
+
+
+// COPILOT HOTFIX V26: safe readable method blocks + parameter connectors.
+(function forgeReadableMethodBlocksV26(){
+  if (typeof window !== 'undefined' && window.__forgeReadableMethodBlocksV26) return;
+  if (typeof window !== 'undefined') window.__forgeReadableMethodBlocksV26 = true;
+  function label26(s){ return String(s||'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/[_:-]+/g,' ').replace(new RegExp('\\\\b\\\\w','g'),function(c){return c.toUpperCase();}); }
+  function html26(s){ return (typeof esc==='function'?esc(s):String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];})); }
+  function css26(s){ return (window.CSS&&CSS.escape)?CSS.escape(String(s)):String(s).replace(/[^a-zA-Z0-9_-]/g,'_'); }
+  function canon26(n){ var raw=String(n||'').trim(); var k=raw.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,''); if(k==='math'||k==='mathlib'||k==='math_lib'||raw==='Math') return 'math'; if(k==='transforms') return 'Transform'; if(k==='ui') return 'GUI'; if(typeof window.canonicalForgeClassName==='function'){try{return window.canonicalForgeClassName(raw);}catch(_){}} return raw; }
+  function addStyle26(){ if(document.getElementById('forge-v26-readable-blocks')) return; var s=document.createElement('style'); s.id='forge-v26-readable-blocks'; s.textContent='.be-block{min-width:220px}.be-block-title{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.be-param-v26{display:grid;grid-template-columns:12px 78px minmax(90px,1fr) 12px;gap:6px;align-items:center}.be-param-v26 .be-param-label{min-width:0;font-size:9px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.be-param-connector{width:9px;height:9px;border-width:2px}.ab-param-chip{display:inline-flex;gap:4px;align-items:center;margin:3px 4px 0 0;padding:2px 7px;border:1px solid var(--border2);border-radius:999px;font:10px var(--mono);color:var(--text1)}.ab-param-chip:before{content:"○";color:var(--accent)}.ab-port-pill{display:inline-block;margin:3px 4px 0 0;padding:2px 6px;border-radius:4px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.18);font:10px var(--mono);color:var(--accent)}'; document.head.appendChild(s); }
+  function mergeLibs26(){ if(typeof BLOCK_DEFS!=='object') return; Object.keys(BLOCK_DEFS).forEach(function(k){ var c=canon26(k); if(c!==k){ BLOCK_DEFS[c]=BLOCK_DEFS[c]||BLOCK_DEFS[k]; if(BLOCK_DEFS[c]!==BLOCK_DEFS[k]){ var seen={}; (BLOCK_DEFS[c].types||[]).forEach(function(t){seen[(t.method||t.name).toLowerCase()]=1;}); (BLOCK_DEFS[k].types||[]).forEach(function(t){var key=(t.method||t.name).toLowerCase(); if(!seen[key]){(BLOCK_DEFS[c].types||[]).push(t); seen[key]=1;}}); } try{delete BLOCK_DEFS[k];}catch(_){}} }); }
+  function cloneParam26(p){ var q={}; Object.keys(p||{}).forEach(function(k){q[k]=Array.isArray(p[k])?p[k].slice():p[k];}); q.connectable=true; return q; }
+  function defFor26(block){ var cat=canon26(block.cat); if(cat!==block.cat && BLOCK_DEFS[cat]) block.cat=cat; var list=(BLOCK_DEFS[block.cat]&&BLOCK_DEFS[block.cat].types)||[]; return list.find(function(t){return t.name===block.type || t.method===block.method;}) || (typeof blockDefFor==='function'?blockDefFor(block):null) || {}; }
+  function paramInput26(block,p){ var key=String(p.k||''); var base='oninput="setBlockParam('+block.id+',&quot;'+html26(key)+'&quot;,this.value)" onchange="setBlockParam('+block.id+',&quot;'+html26(key)+'&quot;,this.value)" onclick="event.stopPropagation()"'; if(p.type==='select'&&Array.isArray(p.options)) return '<select class="be-param-input" '+base+'>'+p.options.map(function(o){return '<option value="'+html26(o)+'"'+(String(o)===String(p.v)?' selected':'')+'>'+html26(o)+'</option>';}).join('')+'</select>'; if(p.type==='color') return '<input class="be-param-input" type="color" value="'+html26(p.v)+'" '+base+'/>'; return '<input class="be-param-input" type="'+(p.type==='number'?'number':'text')+'" value="'+html26(p.v)+'" '+base+'/>'; }
+  function paramRows26(block){ return (block.params||[]).map(function(p){ var inp='param:'+p.k, out='value:'+p.k; return '<div class="be-param be-param-v26"><div class="be-connector be-param-connector '+(isPortConnected(block.id,inp,'in')?'connected':'')+'" data-block="'+block.id+'" data-port="'+html26(inp)+'" data-dir="in" title="Input: '+html26(p.k)+'"></div><span class="be-param-label" title="'+html26(p.k)+'">'+html26(label26(p.k))+'</span>'+paramInput26(block,p)+'<div class="be-connector be-param-connector '+(isPortConnected(block.id,out,'out')?'connected':'')+'" data-block="'+block.id+'" data-port="'+html26(out)+'" data-dir="out" title="Output: '+html26(p.k)+'"></div></div>'; }).join(''); }
+  var previousRender26=(typeof renderBlockEditor==='function')?renderBlockEditor:null;
+  renderBlockEditor=function(){ mergeLibs26(); addStyle26(); var canvas=safeEl('be-canvas'), svg=safeEl('be-svg'); if(!canvas||!svg){ if(previousRender26) return previousRender26(); return; } ensureBlockViewV4(); canvas.innerHTML=''; svg.innerHTML=''; svg.setAttribute('viewBox','0 0 2400 1600'); applyBlockViewV4(); BE.blocks.forEach(function(block){ var def=defFor26(block); if((!block.params||!block.params.length)&&def.params) block.params=def.params.map(cloneParam26); var catDef=BLOCK_DEFS[block.cat]||{}; var col=catDef.color||'#888', bg=catDef.bg||'rgba(128,128,128,.12)'; var el=document.createElement('div'); el.className='be-block'+((typeof beIsSelected==='function'?beIsSelected(block.id):block.id===BE.selected)?' selected':''); el.id='be-block-'+block.id; el.style.cssText='left:'+block.x+'px;top:'+block.y+'px'; var ins=(def.ports&&def.ports.in)||[], outs=(def.ports&&def.ports.out)||[]; el.innerHTML='<div class="be-block-header" style="background:'+bg+'"><span class="be-block-cat" style="background:'+col+'20;color:'+col+';border:1px solid '+col+'40">'+html26(block.cat)+'</span><span class="be-block-title" title="'+html26((block.library||block.cat)+'.'+(block.method||block.type))+'">'+html26(block.type)+'</span></div><div class="be-block-body">'+ins.map(function(port){return '<div class="be-port-row"><div class="be-port in"><div class="be-connector '+(isPortConnected(block.id,port,'in')?'connected':'')+'" data-block="'+block.id+'" data-port="'+html26(port)+'" data-dir="in"></div><span style="font-size:10px;color:var(--text2)">'+html26(port)+'</span></div></div>';}).join('')+outs.map(function(port){return '<div class="be-port-row"><div class="be-port out" style="margin-left:auto"><span style="font-size:10px;color:var(--text2)">'+html26(port)+'</span><div class="be-connector '+(isPortConnected(block.id,port,'out')?'connected':'')+'" data-block="'+block.id+'" data-port="'+html26(port)+'" data-dir="out"></div></div></div>';}).join('')+paramRows26(block)+'</div>'; el.querySelector('.be-block-header').addEventListener('mousedown',function(ev){ev.stopPropagation(); if(V3.connecting)return; snapshotBlocks(); PATCH_V4.movedBlockSnapshot=true; BE.selected=block.id; var pt=beLocalPointV4(ev); BE.dragging=block; BE.dragOffX=pt.x-block.x; BE.dragOffY=pt.y-block.y; renderBlockEditor();}); el.addEventListener('mousedown',function(ev){if(!ev.target.classList.contains('be-connector')){BE.selected=block.id;renderBlockEditor();}}); canvas.appendChild(el); }); canvas.querySelectorAll('.be-connector').forEach(function(c){c.addEventListener('mousedown',function(ev){beginBlockConnection(ev,+c.dataset.block,c.dataset.port,c.dataset.dir);});}); BE.connections.forEach(function(conn){ var fromEl=canvas.querySelector('#be-block-'+conn.from+' .be-connector[data-port="'+css26(conn.fromPort)+'"][data-dir="out"]'); var toEl=canvas.querySelector('#be-block-'+conn.to+' .be-connector[data-port="'+css26(conn.toPort)+'"][data-dir="in"]'); if(!fromEl||!toEl)return; var a=connectorPoint(fromEl), b=connectorPoint(toEl); var hit=document.createElementNS('http://www.w3.org/2000/svg','path'); hit.setAttribute('d',makeBezier(a,b)); hit.setAttribute('class','be-connection-hit'); hit.addEventListener('dblclick',function(){snapshotBlocks();BE.connections=BE.connections.filter(function(c){return c!==conn;});renderBlockEditor();syncCodeFromBlocksV4('connection removed');}); svg.appendChild(hit); var path=document.createElementNS('http://www.w3.org/2000/svg','path'); path.setAttribute('d',makeBezier(a,b)); path.setAttribute('stroke','#00d4ff'); path.setAttribute('stroke-width','2'); path.setAttribute('fill','none'); path.setAttribute('opacity','.75'); svg.appendChild(path); }); updateBlockValidationV4(); addRunBlocksButtonV4(); };
+  function linkedValue26(block,p){ var link=(BE.connections||[]).find(function(c){return c.to===block.id&&c.toPort==='param:'+p.k;}); if(!link)return p.v; var src=(BE.blocks||[]).find(function(b){return b.id===link.from;}); if(!src)return p.v; if(String(link.fromPort||'').indexOf('value:')===0){var key=String(link.fromPort).slice(6); var sp=(src.params||[]).find(function(x){return x.k===key;}); if(sp)return sp.v;} if(src.__lastResult!==undefined)return src.__lastResult; return p.v; }
+  function cast26(v){ if(v==='true')return true; if(v==='false')return false; if(v!==''&&v!=null&&!isNaN(v))return Number(v); return v; }
+  var previousExecute26=(typeof executeBlockV4==='function')?executeBlockV4:null;
+  executeBlockV4=async function(block){ var params={}, ordered=[]; (block.params||[]).forEach(function(p){var v=cast26(linkedValue26(block,p)); params[p.k]=v; ordered.push(v);}); var lib=canon26(block.library||block.lib||block.cat||''), method=block.method||(typeof blockTypeToMethodV4==='function'?blockTypeToMethodV4(block.cat,block.type):String(block.type||'').replace(/\s+(.)/g,function(_,c){return c.toUpperCase();}).replace(/^./,function(c){return c.toLowerCase();})); try{ if(window.ensureForgeGlobals) await window.ensureForgeGlobals(); else if(window.ForgeGlobalImportsReady) await window.ForgeGlobalImportsReady; var candidates=[window[lib],window.ForgeClasses&&window.ForgeClasses[lib],window.ForgeClasses&&window.ForgeClasses[String(lib).toLowerCase()],window.ForgeLibs&&window.ForgeLibs[lib],window.ForgeLibs&&window.ForgeLibs[String(lib).toLowerCase()],window.ForgeMethods&&window.ForgeMethods[lib]].filter(Boolean); var fn=null,target=null; candidates.some(function(c){ if(c&&typeof c[method]==='function'){fn=c[method];target=c;return true;} if(c&&c.default&&typeof c.default[method]==='function'){fn=c.default[method];target=c.default;return true;} return false;}); if(!fn&&window.ForgeMethods&&typeof window.ForgeMethods[lib+'.'+method]==='function'){fn=window.ForgeMethods[lib+'.'+method];target=window.ForgeMethods;} if(fn){var r; try{r=await fn.apply(target,ordered);}catch(_){r=await fn.call(target,params);} block.__lastResult=r; logConsole('info','  ↳ '+lib+'.'+method+'('+Object.keys(params).join(', ')+') executed'); return r;} if(previousExecute26)return previousExecute26(block); logConsole('warn','  ↳ Method '+lib+'.'+method+'() not found'); }catch(err){ logConsole('error','  ↳ Error: '+(err&&err.message?err.message:err)); } };
+  var previousAdd26=(typeof addBlock==='function')?addBlock:null;
+  addBlock=function(){ mergeLibs26(); addStyle26(); return previousAdd26 ? previousAdd26() : undefined; };
+  var setBlockInput=function(blockId,key,value){ return setBlockParam(blockId,key,value); };
+  if(typeof window!=='undefined'){ window.setBlockInput=setBlockInput; window.refreshForgeLibraryBlocks=function(){ mergeLibs26(); if(typeof generateBlockDefsFromLibs==='function'){try{var d=generateBlockDefsFromLibs(); Object.keys(d||{}).forEach(function(k){BLOCK_DEFS[canon26(k)]=d[k];});}catch(_){}} if(STATE.editorTab==='blocks')renderBlockEditor(); return BLOCK_DEFS; }; }
+  mergeLibs26();
+})();
+
+
+// COPILOT FIX V27: parameter/value connector compatibility + clean Add Block modal.
+// - Allows normal value outputs (for example math.map result) or value:param outputs
+//   to connect into parameter inputs such as Text.x and Text.y.
+// - Hides connector dots while the Add Block modal is open.
+// - Ensures the Add Block modal closes after a successful add, even if earlier patches override confirmAddBlock.
+(function(){
+  if (typeof window !== 'undefined' && window.__forgeParamConnectorFixV27) return;
+  if (typeof window !== 'undefined') window.__forgeParamConnectorFixV27 = true;
+
+  function addV27Style(){
+    if (document.getElementById('forge-param-connector-fix-v27')) return;
+    var s = document.createElement('style');
+    s.id = 'forge-param-connector-fix-v27';
+    s.textContent = '' +
+      'body.forge-add-block-open #block-editor .be-connector{visibility:hidden!important;}' +
+      'body.forge-add-block-open #be-svg path{visibility:hidden!important;}' +
+      '#modal-add-block .be-connector,#modal-add-block .lib-block-dot{display:none!important;visibility:hidden!important;}' +
+      '#modal-add-block .ab-param-chip:before{content:none!important;display:none!important;}';
+    document.head.appendChild(s);
+  }
+
+  function isParamInPort(port){ return String(port || '').indexOf('param:') === 0; }
+  function isParamOutPort(port){ return String(port || '').indexOf('value:') === 0; }
+  function paramKeyFromPort(port){ return String(port || '').replace(/^(param:|value:)/, ''); }
+  function findBlock(id){ return (BE.blocks || []).find(function(b){ return b.id === id; }); }
+  function defForV27(block){
+    try {
+      if (typeof defFor26 === 'function') return defFor26(block) || {};
+      if (typeof blockDefFor === 'function') return blockDefFor(block) || {};
+    } catch (_) {}
+    return {};
+  }
+  function hasDeclaredPort(block, port, dir){
+    if (!block) return false;
+    if (isParamInPort(port) || isParamOutPort(port)) {
+      var key = paramKeyFromPort(port);
+      return !!(block.params || []).some(function(p){ return String(p.k) === key; });
+    }
+    var def = defForV27(block);
+    var list = ((def.ports || {})[dir] || []);
+    return list.indexOf(port) !== -1;
+  }
+  function paramType(block, key){
+    var p = (block && block.params || []).find(function(x){ return String(x.k) === String(key); });
+    return p && p.type ? String(p.type) : '';
+  }
+  function portType(block, port, dir){
+    if (isParamInPort(port) || isParamOutPort(port)) return paramType(block, paramKeyFromPort(port));
+    // Most classic block outputs, including math Map result, are value-like.
+    if (dir === 'out') {
+      if (/result|out|value/i.test(String(port || ''))) return 'value';
+      return 'value';
+    }
+    return '';
+  }
+  function compatibleTypes(outType, inType){
+    outType = String(outType || '').toLowerCase();
+    inType = String(inType || '').toLowerCase();
+    if (!outType || !inType || outType === 'value') return true;
+    if (outType === inType) return true;
+    if (inType === 'text') return true;       // numbers/bools can feed text labels.
+    if (inType === 'number' && outType === 'text') return true; // runtime cast handles numeric strings.
+    return false;
+  }
+
+  canConnectPorts = function(from, to){
+    if (!from || !to) return false;
+    if (from.blockId === to.blockId) return false;
+    if (from.dir === to.dir) return false;
+    var out = from.dir === 'out' ? from : to;
+    var inn = from.dir === 'in' ? from : to;
+    var outBlock = findBlock(out.blockId);
+    var inBlock = findBlock(inn.blockId);
+    if (!outBlock || !inBlock) return false;
+    if (!hasDeclaredPort(outBlock, out.port, 'out')) return false;
+    if (!hasDeclaredPort(inBlock, inn.port, 'in')) return false;
+    if (!compatibleTypes(portType(outBlock, out.port, 'out'), portType(inBlock, inn.port, 'in'))) return false;
+    return !(BE.connections || []).some(function(c){
+      return c.to === inn.blockId && c.toPort === inn.port && c.from === out.blockId && c.fromPort === out.port;
+    });
+  };
+
+  var oldOpenModalV27 = (typeof openModal === 'function') ? openModal : null;
+  openModal = function(id){
+    var r = oldOpenModalV27 ? oldOpenModalV27(id) : undefined;
+    if (id === 'modal-add-block') document.body.classList.add('forge-add-block-open');
+    addV27Style();
+    return r;
+  };
+
+  var oldCloseModalV27 = (typeof closeModal === 'function') ? closeModal : null;
+  closeModal = function(id){
+    var r = oldCloseModalV27 ? oldCloseModalV27(id) : undefined;
+    if (!id || id === 'modal-add-block') document.body.classList.remove('forge-add-block-open');
+    return r;
+  };
+
+  var oldAddBlockV27 = (typeof addBlock === 'function') ? addBlock : null;
+  addBlock = function(){
+    addV27Style();
+    var r = oldAddBlockV27 ? oldAddBlockV27.apply(this, arguments) : undefined;
+    document.body.classList.add('forge-add-block-open');
+    return r;
+  };
+
+  var oldConfirmAddBlockV27 = (typeof confirmAddBlock === 'function') ? confirmAddBlock : null;
+  confirmAddBlock = function(){
+    var beforeCount = (BE.blocks || []).length;
+    var r = oldConfirmAddBlockV27 ? oldConfirmAddBlockV27.apply(this, arguments) : undefined;
+    if ((BE.blocks || []).length > beforeCount) closeModal('modal-add-block');
+    return r;
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addBlock = addBlock;
+    window.confirmAddBlock = confirmAddBlock;
+    window.openModal = openModal;
+    window.closeModal = closeModal;
+  }
+  addV27Style();
+})();
 
 return { STATE, LIBS, BLOCK_DEFS, ASSET_TREE, BE, PE, PIXELART_BRIDGE, destroyPixelEditor };
 `;
